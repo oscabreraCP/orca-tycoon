@@ -474,8 +474,9 @@ function renderStats() {
     if (u.staff.state === 'waiting' || u.staff.state === 'blocked') needYou++
     interns += u.staff.interns.length
   }
-  const parts = [`${layout.rooms.length} teams`, `${layout.seats.length} staff`, `${busy} busy`]
-  if (interns) parts.push(`${interns} interns`)
+  const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`
+  const parts = [plural(layout.rooms.length, 'team'), `${layout.seats.length} staff`, `${busy} busy`]
+  if (interns) parts.push(plural(interns, 'intern'))
   if (needYou) parts.push(`${needYou} need you`)
   document.getElementById('stats').textContent = parts.join(' · ')
 }
