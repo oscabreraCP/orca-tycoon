@@ -2,7 +2,7 @@
 
 Your coding agents, as tiny pixel staff in an office you can watch.
 
-![The Orca Tycoon office: four project areas with desks, interns walking the aisles, a speech bubble over a finished agent and one agent at the coffee corner](docs/office.png)
+![The Orca Tycoon office: five teams at their desks, specialists on stools beside their agents, and a commons band in the middle with the lounge, coffee corner, foosball table and calling booths](docs/office.png)
 
 Orca Tycoon is a plugin for [Orca](https://github.com/stablyai/orca), the desktop app for running
 many coding agents in parallel git worktrees. It draws every agent on your machine as a little
@@ -25,12 +25,22 @@ The worker looks for the Orca CLI at `/Applications/Orca.app/Contents/Resources/
 
 ## Who works here
 
-- **Projects are teams.** Each repository gets its own open area on the office floor.
+- **Projects are teams.** Each repository gets its own open area on the office floor. A big
+  team spreads across the full width; small ones share the floor in two columns.
 - **Agents get desks.** Every agent has a seat with a monitor facing you. A worktree's child
   worktrees sit right next to it, so a stack of branches reads as one row of desks.
-- **Subagents are interns.** They walk around in front of their parent's desk while they work.
-- **Background tasks mean a coffee break.** An agent whose turn is over but whose background tasks
-  are still running gets up, walks to the coffee corner and comes back when the tasks finish.
+- **Subagents are specialists.** Every desk has a stool at its end, the second seat. When an
+  agent calls in a subagent, a specialist walks in through the front door in the side wall, sits on that stool
+  leaning in toward the screen, and leaves the same way when the job is done. A desk grows up to
+  three stools and shows `+N` beyond that. The badge on a specialist's shirt is coloured by role,
+  the same across the whole office.
+- **Idle agents take a break.** A band across the middle of the floor holds the commons: a lounge
+  with a sofa, the coffee corner and kitchen, a foosball table and calling booths. Agents that are
+  done, idle, or waiting on background tasks walk over and pick something to do. Every minute
+  each one draws a new activity: a nap on the sofa (done and idle agents only), a coffee or a book
+  on the sofa, a mug at the coffee corner, a game of foosball (always two players), or a call in a
+  booth. When a place is full they take their next choice, and when everything is full they stay
+  at their desk. When an agent gets new work, it walks back and sits down.
 - **Agents speak up.** When an agent finishes, a speech bubble shows the first line of its last
   reply. When one starts waiting for you it says "Need you!", and when it gets stuck it says
   "Stuck!".
@@ -39,26 +49,28 @@ A status line along the top counts teams, staff, busy agents and how many need y
 
 ## Reading the monitors
 
-![One desk per state: a red flashing exclamation mark, dozing, an empty chair while its agent heads for coffee, an amber question mark, and typing](docs/states.png)
+![One desk per state on a narrow panel: a red flashing exclamation mark, an amber question mark and typing at their desks, while the done agent naps on the sofa and the monitoring one takes a call in a booth](docs/states.png)
 
 | Agent state | What you see |
 | --- | --- |
 | working | typing, code scrolling on screen |
-| watching background tasks | away at the water dispenser or coffee machine, mug in hand |
+| watching background tasks | on a break in the commons, never napping |
 | waiting for you | amber `?` on screen |
 | blocked | red flashing screen with `!` |
-| done | dozing, `z` |
+| done | on a break in the commons, often napping; dozing at the desk with a `z` when the commons are full |
 
-Click a seat to pin its speech bubble and see the worktree, state, task, current tool and interns.
+Click a seat to pin its speech bubble and see the worktree, state, task, current tool and specialists.
 
-![An agent leaves its desk, walks to the coffee corner, waits there, finishes and walks back](docs/coffee.gif)
+![An agent finishes with a speech bubble, walks down to the commons and takes a call in a booth, then walks back to its desk when new work arrives](docs/break.gif)
+
+![Two specialists come in through the front door one after the other and take the stools at a desk, while another finishes and walks out](docs/specialists.gif)
 
 ## How it works
 
 Orca's plugin API (`agents.list`) only lists the agents of the focused workspace, and it has no
 subagents. To see the whole office, the worker (`src/worker.ts`) runs `orca worktree ps --json`
 instead. Orca's own sidebar and phone app draw from the same rows. The worker trims them to a small
-office model (`src/protocol.ts`).
+office model (`src/protocol.ts`): projects, seats, and each seat's specialists.
 
 The panel (`src/panel.html`, `src/panel.js`, `src/sprites.js`) polls the worker every 3 seconds,
 the same rate Orca's phone app uses, and draws one canvas at 8 frames a second. Every sprite is
@@ -78,9 +90,9 @@ orca plugin dev reload .      # after editing; the panel redraws
 orca plugin shot local.orca-tycoon --panel office --out shot.png
 ```
 
-`AWAY_STATES` at the top of `src/panel.js` decides which states send an agent to the coffee corner.
-Out of the box it's only `monitoring`. Add `waiting` if you'd like agents that wait for you to go
-get a coffee too.
+At the top of `src/panel.js`, `AWAY_STATES` and `LOUNGE_STATES` decide which states send an agent
+on a break, and `ACTIVITIES` lists what they can do there, with a weight for how often each comes
+up. Add `waiting` to `AWAY_STATES` if you'd like agents that wait for you to take a break too.
 
 The screenshots in `docs/` show a made-up office, rendered from the real panel code.
 

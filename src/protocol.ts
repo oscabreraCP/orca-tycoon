@@ -3,7 +3,8 @@ export {}
 
 export type StaffState = 'working' | 'monitoring' | 'waiting' | 'blocked' | 'done' | 'idle'
 
-export type Intern = {
+/** A subagent: a specialist the agent called in, seated on a stool at its desk. */
+export type Specialist = {
   id: string
   role: string | null
   task: string | null
@@ -20,7 +21,7 @@ export type Staff = {
   said: string | null
   state: StaffState
   since: number
-  interns: Intern[]
+  specialists: Specialist[]
 }
 
 export type Desk = {

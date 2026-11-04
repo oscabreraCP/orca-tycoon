@@ -2,7 +2,7 @@
 import { assert, test } from 'orca/testing'
 import { toSnapshot } from './worker'
 
-test('groups agents by project and keeps subagents as interns', () => {
+test('groups agents by project and keeps subagents as specialists', () => {
   const raw = {
     result: {
       worktrees: [
@@ -36,6 +36,6 @@ test('groups agents by project and keeps subagents as interns', () => {
   assert.deepEqual(snap.floors.map((f) => f.repo), ['client-portal', 'infra'])
   const infra = snap.floors[1].desks[0]
   assert.equal(infra.branch, 'main')
-  assert.equal(infra.staff[0].interns[0].role, 'release-engineer')
+  assert.equal(infra.staff[0].specialists[0].role, 'release-engineer')
   assert.equal(snap.floors[0].desks[0].staff[0].state, 'monitoring')
 })

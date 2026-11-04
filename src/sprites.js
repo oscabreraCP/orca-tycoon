@@ -112,7 +112,7 @@ export function person(p, staff, t, away = false) {
 }
 
 /** Monitor facing the viewer plus hands and props, drawn after the desk. */
-export function workstation(p, staff, t) {
+export function workstation(p, staff, t, away = false) {
   const s = staff.state
   const { skin } = look(staff.id || 'x')
   // monitor
@@ -149,32 +149,43 @@ export function workstation(p, staff, t) {
     if (t % 6 < 4) p(16 + (t % 2), 12 - ((t >> 1) % 2), 1, 1, C.steam)
   }
   // overhead marks
-  if (s === 'done' || s === 'idle') {
+  if ((s === 'done' || s === 'idle') && !away) {
     const z = t % 16
     if (z < 12) glyph(p, 'z', 14 + (z >> 2), 2 - (z >> 2), C.white)
   }
 }
 
-/** A small subagent figure, 5 x 9, walking between `x0` and `x0 + range`. */
-export function intern(p, item, x0, range, t, seed) {
-  const { skin, hair, shirt } = look(item.id || 'intern')
-  const s = item.state
-  const busy = s === 'working'
-  const sit = s === 'done' || s === 'idle'
-  const phase = (t + seed * 7) % (range * 2 || 1)
-  const x = busy ? x0 + (phase < range ? phase : range * 2 - phase) : x0 + Math.floor(range / 2)
-  const top = sit ? 2 : busy && t % 2 ? -1 : 0
-  p(x, top, 5, 2, hair)
-  p(x, top + 2, 5, 2, skin)
-  p(x, top + 4, 5, 3, shirt)
-  p(x + 4, top + 5, 2, 2, C.white) // clipboard
-  if (!sit) {
-    const step = busy ? t % 2 : 0
-    p(x + (step ? 0 : 1), top + 7, 1, 2, '#30324a')
-    p(x + (step ? 4 : 3), top + 7, 1, 2, '#30324a')
-  }
-  if (s === 'waiting') glyph(p, '?', x + 1, top - 6, C.amber)
-  if (s === 'blocked') glyph(p, '!', x + 1, top - 6, C.red)
+const ROLE_COLORS = ['#ffd166', '#06d6a0', '#ef476f', '#118ab2', '#c77dff', '#f3722c']
+
+/** One colour per specialist role, the same across the whole office. */
+export function roleColor(role) {
+  const name = role || 'specialist'
+  let n = 0
+  for (let i = 0; i < name.length; i++) n = (n * 31 + name.charCodeAt(i)) >>> 0
+  return ROLE_COLORS[n % ROLE_COLORS.length]
+}
+
+/** A stool, 7 x 7, pulled up to the end of a desk. */
+export function stool(p) {
+  p(0, 0, 7, 2, '#b88a5a')
+  p(0, 0, 7, 1, '#d4a670')
+  p(3, 2, 1, 4, '#6b4a2e')
+  p(1, 6, 5, 1, '#6b4a2e')
+}
+
+/** A specialist on a stool, seen side-on, leaning in toward the agent's screen on the left. */
+export function specialist(p, spec, t) {
+  const { skin, hair, shirt } = look(spec.id || 'specialist')
+  const lean = spec.state === 'working' && (t >> 2) % 2 ? -1 : 0
+  p(1 + lean, 0, 5, 2, hair)
+  p(1 + lean, 2, 5, 4, skin)
+  p(5 + lean, 1, 1, 3, hair)
+  p(2 + lean, 3, 1, 1, C.ink)
+  p(1, 6, 6, 5, shirt)
+  p(3, 7, 2, 2, roleColor(spec.role))
+  p(-1 + lean, 8, 2, 1, skin)
+  if (spec.state === 'waiting') glyph(p, '?', 2, -6, C.amber)
+  if (spec.state === 'blocked') glyph(p, '!', 2, -6, C.red)
 }
 
 export function plant(p) {
@@ -209,14 +220,90 @@ export function kitchen(p, w) {
   p(w - 10, 2, 9, 1, '#b9bccb')
 }
 
+/** The lounge: a rug, a long sofa with seats every 9 pixels from x = 6, a coffee table. */
 export function lounge(p, w) {
-  // rug, sofa, coffee table
-  p(2, 2, w - 4, 16, '#5d6b8e')
-  p(4, 3, w - 8, 14, '#6b7aa0')
+  p(0, 0, w, 26, '#5d6b8e')
+  p(2, 1, w - 4, 24, '#6b7aa0')
+  // sofa: back, seat cushions, arms
+  p(4, 3, w - 8, 6, '#8a3d3d')
+  p(4, 3, w - 8, 1, '#a44c4c')
+  p(4, 9, w - 8, 4, '#a44c4c')
+  for (let x = 13; x < w - 6; x += 9) p(x, 9, 1, 4, '#8a3d3d')
+  p(2, 5, 3, 9, '#7a3434')
+  p(w - 5, 5, 3, 9, '#7a3434')
+  // coffee table with a magazine
   const mid = Math.floor(w / 2)
-  p(mid - 10, 5, 20, 5, '#8a3d3d')
-  p(mid - 10, 5, 20, 2, '#a44c4c')
-  p(mid - 4, 12, 8, 3, C.woodDark)
+  p(mid - 8, 17, 16, 4, C.woodDark)
+  p(mid - 8, 17, 16, 1, C.wood)
+  p(mid - 3, 18, 5, 2, '#e8e3d6')
+}
+
+/** An agent on the sofa, 8 x 13: napping (`nap`), with a coffee (`coffee`) or reading (`read`). */
+export function lounger(p, staff, t, pose = 'nap') {
+  const { skin, hair, shirt } = look(staff.id || 'x')
+  const slump = pose === 'nap' ? (t >> 3) % 2 : 0
+  p(1, 1 + slump, 6, 2, hair)
+  p(1, 3 + slump, 6, 3, skin)
+  if (pose === 'nap') {
+    p(2, 4 + slump, 1, 1, C.ink)
+    p(5, 4 + slump, 1, 1, C.ink)
+  } else if (t % 30 !== 0) {
+    p(2, 3 + (pose === 'read' ? 1 : 0), 1, 2, C.ink)
+    p(5, 3 + (pose === 'read' ? 1 : 0), 1, 2, C.ink)
+  }
+  p(0, 6, 8, 5, shirt)
+  p(1, 11, 2, 2, '#30324a')
+  p(5, 11, 2, 2, '#30324a')
+  if (pose === 'nap') {
+    const z = t % 16
+    if (z < 12) glyph(p, 'z', 6 + (z >> 2), -2 - (z >> 2), C.white)
+  } else if (pose === 'coffee') {
+    p(6, 7, 2, 2, C.white)
+    if (t % 8 < 4) p(6 + ((t >> 1) % 2), 5, 1, 1, C.steam)
+  } else if (pose === 'read') {
+    // an open book; a page turns now and then
+    const cover = pick(['#c4453c', '#4f7cff', '#47c98f', '#f2b134'], staff.id || 'x')
+    p(1, 7, 6, 3, cover)
+    p(2, 7, 4, 2, C.white)
+    if (t % 40 < 3) p(4, 6, 2, 2, C.white)
+  }
+}
+
+/** Foosball table, 28 x 14: green field, rods with little players, the ball moving when in play. */
+export function foosball(p, t, playing) {
+  p(0, 12, 2, 4, C.woodDark)
+  p(26, 12, 2, 4, C.woodDark)
+  p(0, 0, 28, 13, C.woodDark)
+  p(1, 1, 26, 11, '#3f8f4a')
+  p(13, 1, 1, 11, '#cfe8d2')
+  p(1, 5, 1, 3, C.white)
+  p(26, 5, 1, 3, C.white)
+  const rods = [5, 10, 17, 22]
+  rods.forEach((x, i) => {
+    p(x, 0, 1, 13, '#b9bccb')
+    const shift = playing ? ((t + i * 2) >> 1) % 3 - 1 : 0
+    const color = i % 2 ? '#4f7cff' : C.red
+    for (const y of [3, 8]) p(x - 1, y + shift, 3, 2, color)
+  })
+  if (playing) {
+    const phase = t % 20
+    const bx = 3 + (phase < 10 ? phase : 20 - phase) * 2.2
+    p(Math.round(bx), 6 + ((t >> 2) % 2), 1, 1, C.white)
+  }
+}
+
+/** Calling booth, 13 x 24: a glass box with a little shelf. Draw `boothGlass` over its caller. */
+export function booth(p) {
+  p(0, 0, 13, 24, '#2a2833')
+  p(1, 1, 11, 22, '#3b4660')
+  p(1, 12, 11, 1, '#4a5578')
+  p(8, 14, 4, 1, C.woodDark)
+}
+
+export function boothGlass(p) {
+  p(1, 1, 11, 22, 'rgba(170, 210, 235, 0.22)')
+  p(2, 2, 1, 8, 'rgba(255, 255, 255, 0.35)')
+  p(0, 0, 13, 1, '#55566a')
 }
 
 /** Coffee machine, 9 x 14, on its own little cabinet. */
@@ -242,7 +329,8 @@ export function waterCooler(p, t) {
 }
 
 /** A standing person, 8 x 15, for walking to the coffee corner and lingering there. */
-export function walker(p, staff, t, moving, left) {
+/** `pose`: 'mug' (default), 'phone' (on a call) or 'play' (hands on the foosball rods). */
+export function walker(p, staff, t, moving, left, badge = null, pose = 'mug') {
   const { skin, hair, shirt } = look(staff.id || 'x')
   const bob = moving ? t % 2 : 0
   p(1, 0 - bob, 6, 2, hair)
@@ -256,7 +344,18 @@ export function walker(p, staff, t, moving, left) {
   p(1, 6 - bob, 6, 5, shirt)
   p(0, 7 - bob, 1, 3, shirt)
   p(7, 7 - bob, 1, 3, shirt)
-  if (!moving) {
+  if (badge) p(2, 7 - bob, 2, 2, badge)
+  else if (!moving && pose === 'phone') {
+    p(left ? 0 : 6, 2, 2, 3, '#1d1e26')
+    p(left ? 0 : 6, 5, 2, 2, skin)
+    if (t % 12 < 8) {
+      const dots = (t >> 2) % 3
+      for (let i = 0; i <= dots; i++) p((left ? -4 : 9) + i * 2, -3, 1, 1, C.white)
+    }
+  } else if (!moving && pose === 'play') {
+    const jiggle = t % 2
+    p(left ? -2 : 7, 8 + jiggle, 3, 1, skin)
+  } else if (!moving) {
     // a mug in hand, steaming
     p(left ? -1 : 7, 8, 2, 2, C.white)
     if (t % 6 < 3) p(left ? -1 : 8, 6 - ((t >> 1) % 2), 1, 1, C.steam)

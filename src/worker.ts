@@ -4,7 +4,7 @@
 import type { OrcaWorkerApi } from 'orca/worker'
 import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import type { Desk, Floor, Intern, OfficeSnapshot, Staff, StaffState } from './protocol'
+import type { Desk, Floor, OfficeSnapshot, Specialist, Staff, StaffState } from './protocol'
 
 const CLI_CANDIDATES = [
   '/Applications/Orca.app/Contents/Resources/bin/orca',
@@ -44,7 +44,7 @@ export function staffState(row: Row): StaffState {
   return 'idle'
 }
 
-function internState(state: unknown): StaffState {
+function specialistState(state: unknown): StaffState {
   if (state === 'working' || state === 'waiting' || state === 'blocked' || state === 'done') {
     return state
   }
@@ -53,11 +53,11 @@ function internState(state: unknown): StaffState {
 
 function toStaff(row: Row): Staff {
   const subs = Array.isArray(row.subagents) ? (row.subagents as Row[]) : []
-  const interns: Intern[] = subs.map((s) => ({
+  const specialists: Specialist[] = subs.map((s) => ({
     id: String(s.id ?? ''),
     role: str(s.agentType),
     task: str(s.description),
-    state: internState(s.state)
+    state: specialistState(s.state)
   }))
   return {
     id: String(row.paneKey ?? ''),
@@ -68,7 +68,7 @@ function toStaff(row: Row): Staff {
     said: str(row.lastAssistantMessage)?.split('\n')[0]?.slice(0, 120) ?? null,
     state: staffState(row),
     since: typeof row.stateStartedAt === 'number' ? row.stateStartedAt : 0,
-    interns
+    specialists
   }
 }
 
