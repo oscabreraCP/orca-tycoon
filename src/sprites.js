@@ -280,7 +280,9 @@ export function foosball(p, t, playing) {
   p(26, 5, 1, 3, C.white)
   const rods = [5, 10, 17, 22]
   rods.forEach((x, i) => {
-    p(x, 0, 1, 13, '#b9bccb')
+    p(x, -2, 1, 17, '#b9bccb')
+    p(x, -3, 1, 1, '#1d1e26')
+    p(x, 15, 1, 1, '#1d1e26')
     const shift = playing ? ((t + i * 2) >> 1) % 3 - 1 : 0
     const color = i % 2 ? '#4f7cff' : C.red
     for (const y of [3, 8]) p(x - 1, y + shift, 3, 2, color)
@@ -329,15 +331,16 @@ export function waterCooler(p, t) {
 }
 
 /** A standing person, 8 x 15, for walking to the coffee corner and lingering there. */
-/** `pose`: 'mug' (default), 'phone' (on a call) or 'play' (hands on the foosball rods). */
+/** `pose`: 'mug' (default), 'phone' (on a call), 'play' (hands on the foosball rods, facing you)
+ * or 'playBack' (at the near side of the table, back to you). */
 export function walker(p, staff, t, moving, left, badge = null, pose = 'mug') {
   const { skin, hair, shirt } = look(staff.id || 'x')
   const bob = moving ? t % 2 : 0
   p(1, 0 - bob, 6, 2, hair)
-  p(1, 2 - bob, 6, 4, skin)
+  p(1, 2 - bob, 6, 4, pose === 'playBack' ? hair : skin)
   p(0, 2 - bob, 1, 2, hair)
   p(7, 2 - bob, 1, 2, hair)
-  if (t % 30 !== 0) {
+  if (t % 30 !== 0 && pose !== 'playBack') {
     p(left ? 2 : 3, 3 - bob, 1, 2, C.ink)
     p(left ? 4 : 5, 3 - bob, 1, 2, C.ink)
   }
@@ -352,9 +355,12 @@ export function walker(p, staff, t, moving, left, badge = null, pose = 'mug') {
       const dots = (t >> 2) % 3
       for (let i = 0; i <= dots; i++) p((left ? -4 : 9) + i * 2, -3, 1, 1, C.white)
     }
-  } else if (!moving && pose === 'play') {
+  } else if (!moving && (pose === 'play' || pose === 'playBack')) {
+    // both hands on the rods, working them
     const jiggle = t % 2
-    p(left ? -2 : 7, 8 + jiggle, 3, 1, skin)
+    const y = pose === 'play' ? 10 : 6
+    p(0, y + jiggle, 2, 1, skin)
+    p(6, y + 1 - jiggle, 2, 1, skin)
   } else if (!moving) {
     // a mug in hand, steaming
     p(left ? -1 : 7, 8, 2, 2, C.white)
@@ -366,6 +372,98 @@ export function walker(p, staff, t, moving, left, badge = null, pose = 'mug') {
   p(5, 12, 1, 2 + step, '#30324a')
   p(1, 14 - step, 2, 1, C.ink)
   p(5, 13 + step, 2, 1, C.ink)
+}
+
+// ---- Palú, the office dog ------------------------------------------------------------------
+// A white, fluffy, curly bichon with floppy ears, dark eyes and nose, and a red collar with a
+// little gold tag.
+
+const FUR = '#f8f5ee'
+const FUR_SHADE = '#e3dccf'
+const COLLAR = '#c4302b'
+const TAG = '#f2b134'
+
+/** Draws in a box `w` wide, mirrored when facing left. */
+function facing(p, w, left) {
+  return (x, y, pw, ph, color) => p(left ? w - x - pw : x, y, pw, ph, color)
+}
+
+/** Palú trotting, side-on, 18 x 10: long and low, short legs going. */
+export function paluWalk(p, t, left) {
+  const m = facing(p, 18, left)
+  const step = t % 2
+  const wag = (t >> 1) % 2
+  // his little stub of a tail, wiggling
+  m(1, 3 - wag, 1, 2, FUR)
+  // long fluffy body
+  m(2, 3, 12, 4, FUR)
+  m(3, 2, 10, 1, FUR)
+  m(3, 6, 11, 1, FUR_SHADE)
+  // short legs, stepping
+  m(3 + step, 7, 2, 2, FUR)
+  m(11 - step, 7, 2, 2, FUR)
+  m(3 + step, 8, 2, 1, FUR_SHADE)
+  m(11 - step, 8, 2, 1, FUR_SHADE)
+  // round fluffy head, floppy ear, face
+  m(12, 0, 5, 5, FUR)
+  m(13, -1, 3, 1, FUR)
+  m(12, 1, 2, 4, FUR_SHADE)
+  m(15, 2, 1, 1, C.ink)
+  m(17, 3, 1, 1, C.ink)
+  // red collar with a gold tag
+  m(12, 5, 3, 1, COLLAR)
+  m(13, 6, 1, 1, TAG)
+}
+
+/** Palú sitting, facing you, 10 x 9: low to the ground. */
+export function paluSit(p, t) {
+  // his stub of a tail peeks out on one side, wiggling
+  const wag = (t >> 1) % 2
+  p(8, 6 - wag, 1, 1, FUR)
+  p(2, 5, 6, 3, FUR)
+  p(2, 7, 6, 1, FUR_SHADE)
+  p(2, 8, 2, 1, FUR)
+  p(6, 8, 2, 1, FUR)
+  p(2, 0, 6, 5, FUR)
+  p(3, -1, 4, 1, FUR)
+  p(1, 1, 2, 4, FUR_SHADE)
+  p(7, 1, 2, 4, FUR_SHADE)
+  if (t % 36 !== 0) {
+    p(3, 2, 1, 1, C.ink)
+    p(6, 2, 1, 1, C.ink)
+  }
+  p(4, 3, 2, 1, C.ink)
+  p(3, 5, 4, 1, COLLAR)
+  p(4, 6, 1, 1, TAG)
+}
+
+/** Palú lying down, 18 x 6: asleep (with a z) or awake with his stub wiggling. */
+export function paluLie(p, t, asleep, left = false) {
+  const m = facing(p, 18, left)
+  const wag = (t >> 1) % 2
+  m(0, 3 - (asleep ? 0 : wag), 1, 2, FUR)
+  m(1, 2, 14, 4, FUR)
+  m(2, 1, 11, 1, FUR)
+  m(1, 5, 14, 1, FUR_SHADE)
+  m(12, 0, 5, 5, FUR)
+  m(12, 1, 2, 4, FUR_SHADE)
+  if (asleep) m(14, 2, 2, 1, C.ink)
+  else m(15, 2, 1, 1, C.ink)
+  m(17, 3, 1, 1, C.ink)
+  m(12, 4, 2, 1, COLLAR)
+  if (asleep) {
+    const z = t % 20
+    if (z < 14) glyph(p, 'z', (left ? 0 : 13) + (z >> 2), -4 - (z >> 2), C.white)
+  }
+}
+
+/** Palú's dog bed, 24 x 9: a long cushion with a raised rim, to fit a long dog. */
+export function dogBed(p) {
+  p(2, 1, 20, 7, '#8a5a3c')
+  p(0, 3, 24, 4, '#8a5a3c')
+  p(1, 2, 22, 6, '#8a5a3c')
+  p(3, 3, 18, 4, '#d29a6c')
+  p(4, 3, 16, 1, '#e3b287')
 }
 
 export { SKIN }

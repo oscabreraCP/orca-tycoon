@@ -1,4 +1,5 @@
-// Orca Tycoon: every agent on this Orca host as a little pixel worker on one office floor.
+// Orca Tycoon: every agent on this Orca host as a little pixel worker on one office floor, with
+// Palú, the office dog, wandering among them.
 // Each project is an open area on the floor; every worktree in it is a seat at a shared desk, with a
 // worktree's children seated next to it. Subagents are specialists: they come in through the
 // front door, sit on a stool at the end of their agent's desk, and leave the same way.
@@ -30,6 +31,10 @@ import {
   stool,
   plant,
   walker,
+  paluWalk,
+  paluSit,
+  paluLie,
+  dogBed,
   waterCooler,
   whiteboard,
   workstation
@@ -60,8 +65,8 @@ const WALK_SPEED = 1.5 // art pixels per frame
 // 'monitoring' is a finished turn waiting on background tasks; add 'waiting' to also send
 // agents that wait for you.
 const AWAY_STATES = new Set(['monitoring'])
-// What an agent on a break can do. Every minute each one draws an activity (weighted, seeded by the
-// agent and the minute, so a reopened panel shows the same picture); a full place passes to the next.
+// What an agent on a break can do. Each one draws an activity per period of its own (weighted,
+// seeded by the agent and the period, so a reopened panel shows the same picture).
 const ACTIVITIES = [
   { id: 'nap', kind: 'lounge', pose: 'nap', weight: 1.5, sleepyOnly: true },
   { id: 'sofa-coffee', kind: 'lounge', pose: 'coffee', weight: 1.5 },
@@ -268,10 +273,12 @@ function computeLayout() {
   for (let sx = cornerX; sx + 8 <= common.x + floorW; sx += 9) common.spots.push({ x: sx, y: cornerY + 17, kind: 'coffee' })
   // the games row: a foosball table, and calling booths along the right
   const fx = common.x + entry + 12
-  common.foosball = { x: fx, y: gamesY + 10 }
+  common.foosball = { x: fx, y: gamesY + 7 }
+  // players stand on the long sides, where the rods stick out: one behind the table facing you,
+  // one in front with their back to you
   common.foos = [
-    { x: fx - 9, y: gamesY + 8, kind: 'foosball', left: false },
-    { x: fx + 29, y: gamesY + 8, kind: 'foosball', left: true }
+    { x: fx + 5, y: gamesY + 7 - 15, kind: 'foosball', left: false, back: false },
+    { x: fx + 15, y: gamesY + 7 + 12, kind: 'foosball', left: false, back: true }
   ]
   common.booths = []
   const boothCount = wide ? 3 : 2
@@ -284,6 +291,14 @@ function computeLayout() {
   for (let i = 0; i < sofaSeats; i++) common.sofa.push({ x: common.lounge.x + 6 + i * 9, y: common.lounge.y + 1, kind: 'lounge' })
   // The front door is in the left wall, level with the band.
   const doorY = bandY + 8
+  // Palú's bed: in the games row between the foosball table and the booths when it fits, else in
+  // a corner of the lounge rug.
+  const gapStart = fx + 34
+  const gapEnd = common.x + floorW - boothCount * 16
+  common.bed =
+    gapEnd - gapStart >= 30
+      ? { x: gapStart + Math.floor((gapEnd - gapStart - 24) / 2), y: gamesY + 14 }
+      : { x: common.lounge.x + common.lounge.w - 27, y: common.lounge.y + 16 }
 
   const bottom = pack(plans.slice(split), bandY + bandH + GAP)
   const rooms = []
@@ -400,6 +415,7 @@ function drawCommon() {
   const playing = [...walkers.values()].filter((w) => w.mode === 'away' && w.activity?.kind === 'foosball').length >= 2
   foosball(painter(ctx, c.foosball.x, c.foosball.y), tick, playing)
   waterCooler(painter(ctx, c.cooler.x, c.cooler.y), tick)
+  dogBed(painter(ctx, c.bed.x, c.bed.y))
   coffeeMachine(painter(ctx, c.coffee.x, c.coffee.y), tick)
 }
 
@@ -432,56 +448,70 @@ function hashOf(text) {
 
 const activityOf = new Map() // seat key -> activity id, for drawing the right pose
 
-/** This minute's spot for every agent on a break, by weighted draw; full places pass on. */
+// Each agent on a break keeps its activity for its own period (45 to 90 s, from its own offset),
+// so they change one at a time, and keeps its spot until then, so nobody else is shuffled.
+const assigned = new Map() // seat key -> { slot, a, kind, index }
+
+function slotOf(key, now) {
+  const period = ACTIVITY_MS * (0.75 + 0.75 * hashOf(`${key}|period`))
+  const offset = hashOf(`${key}|offset`) * period
+  return Math.floor((now + offset) / period)
+}
+
+/** The spot for every agent on a break; full places pass on, nobody plays foosball alone. */
 function assignBreaks(common) {
-  const minute = Math.floor(Date.now() / ACTIVITY_MS)
-  const free = {
-    lounge: [...common.sofa],
-    coffee: [...common.spots],
-    foosball: [...common.foos],
-    booth: [...common.booths]
-  }
-  // A fresh picking order every minute, so the sofa is not always taken by the same people.
-  const onBreak = layout.seats
-    .filter((s) => AWAY_STATES.has(s.staff.state) || LOUNGE_STATES.has(s.staff.state))
-    .map((s) => ({ s, k: hashOf(`${s.key}|${minute}|turn`) }))
-    .sort((a, b) => a.k - b.k)
-    .map(({ s }) => s)
-  const choice = new Map()
-  const order = new Map()
+  const now = Date.now()
+  const pools = { lounge: common.sofa, coffee: common.spots, foosball: common.foos, booth: common.booths }
+  const onBreak = layout.seats.filter((s) => AWAY_STATES.has(s.staff.state) || LOUNGE_STATES.has(s.staff.state))
+  const onKeys = new Set(onBreak.map((s) => s.key))
+  for (const key of assigned.keys()) if (!onKeys.has(key)) assigned.delete(key)
+
+  const taken = { lounge: new Set(), coffee: new Set(), foosball: new Set(), booth: new Set() }
+  const pending = []
   for (const seat of onBreak) {
+    const slot = slotOf(seat.key, now)
     const sleepy = LOUNGE_STATES.has(seat.staff.state)
-    // weighted random order: smaller -log(u) / weight comes first
-    const ranked = ACTIVITIES.filter((a) => sleepy || !a.sleepyOnly)
-      .map((a, i) => ({ a, score: -Math.log(1e-9 + hashOf(`${seat.key}|${minute}|${i}`)) / a.weight }))
+    const e = assigned.get(seat.key)
+    const keep = e && e.slot === slot && e.index < pools[e.kind].length && (sleepy || !e.a.sleepyOnly) && !taken[e.kind].has(e.index)
+    if (keep) taken[e.kind].add(e.index)
+    else {
+      assigned.delete(seat.key)
+      pending.push({ seat, slot, sleepy })
+    }
+  }
+  const ranked = ({ seat, slot, sleepy }) =>
+    ACTIVITIES.filter((a) => sleepy || !a.sleepyOnly)
+      .map((a, i) => ({ a, score: -Math.log(1e-9 + hashOf(`${seat.key}|${slot}|${i}`)) / a.weight }))
       .sort((x, y) => x.score - y.score)
       .map((r) => r.a)
-    order.set(seat.key, ranked)
-  }
-  const take = (seat, from) => {
-    for (const a of order.get(seat.key).slice(from)) {
-      if (free[a.kind].length) {
-        choice.set(seat.key, { a, spot: free[a.kind].shift(), rank: order.get(seat.key).indexOf(a) })
+  const place = (p, skip) => {
+    for (const a of ranked(p)) {
+      if (a.kind === skip) continue
+      const index = pools[a.kind].findIndex((_, i) => !taken[a.kind].has(i))
+      if (index >= 0) {
+        taken[a.kind].add(index)
+        assigned.set(p.seat.key, { slot: p.slot, a, kind: a.kind, index })
         return
       }
     }
   }
-  for (const seat of onBreak) take(seat, 0)
-  // Nobody plays foosball alone: a lone player takes their next choice instead.
-  const players = onBreak.filter((s) => choice.get(s.key)?.a.kind === 'foosball')
+  pending.sort((x, y) => hashOf(`${x.seat.key}|${x.slot}|turn`) - hashOf(`${y.seat.key}|${y.slot}|turn`))
+  for (const p of pending) place(p, null)
+  // Nobody plays foosball alone: a lone player picks something else.
+  const players = [...assigned].filter(([, e]) => e.kind === 'foosball')
   if (players.length === 1) {
-    const lone = players[0]
-    free.foosball.unshift(choice.get(lone.key).spot)
-    free.foosball.length = 0
-    const from = choice.get(lone.key).rank + 1
-    choice.delete(lone.key)
-    take(lone, from)
+    const [key, e] = players[0]
+    assigned.delete(key)
+    taken.foosball.delete(e.index)
+    const seat = onBreak.find((s) => s.key === key)
+    place({ seat, slot: e.slot, sleepy: LOUNGE_STATES.has(seat.staff.state) }, 'foosball')
   }
+
   activityOf.clear()
   const spotOf = new Map()
-  for (const [key, { a, spot }] of choice) {
-    spotOf.set(key, spot)
-    activityOf.set(key, a)
+  for (const [key, e] of assigned) {
+    spotOf.set(key, pools[e.kind][e.index])
+    activityOf.set(key, e.a)
   }
   return spotOf
 }
@@ -651,6 +681,103 @@ function stepVisitors() {
   }
 }
 
+// ---- Palú, the office dog ----------------------------------------------------------------------
+// Purely for company: he never takes a seat or changes what anyone does. Mostly he wanders the
+// floor; now and then he naps in his bed, or lies down at someone's desk and naps there a while,
+// more often beside someone who is dozing too.
+
+const PALU_SPEED = 1
+let palu = null
+
+const between = (lo, hi) => lo + Math.random() * (hi - lo)
+
+function paluBedSpot() {
+  const b = layout.common.bed
+  return { x: b.x + 3, y: b.y + 1 }
+}
+
+/** Where he lies when visiting a desk: on the floor in front of it, below the nameplate. */
+function paluDeskSpot(seat) {
+  return { x: seat.x + 1, y: seat.y + SEAT_H + LABEL_H }
+}
+
+function paluPath(to) {
+  const c = layout.common
+  const lanes = [c.laneTop + 6, c.laneBottom + 6]
+  const lane = lanes.reduce((a, b) => (Math.abs(b - to.y) < Math.abs(a - to.y) ? b : a))
+  return [{ x: palu.x, y: lane }, { x: to.x, y: lane }, { x: to.x, y: to.y }]
+}
+
+function paluNext() {
+  const c = layout.common
+  const atDesk = layout.seats.filter((s) => !walkers.has(s.key))
+  const options = [{ act: 'wander', w: 3 }, { act: 'bed', w: 1 }]
+  if (atDesk.length) options.push({ act: 'visit', w: 2 })
+  let r = Math.random() * options.reduce((n, o) => n + o.w, 0)
+  const act = options.find((o) => (r -= o.w) < 0)?.act ?? 'wander'
+  palu.act = act
+  palu.seatKey = null
+  palu.restLeft = Math.random() < 0.5
+  if (act === 'bed') {
+    palu.path = paluPath(paluBedSpot())
+    palu.restFor = between(40000, 90000)
+  } else if (act === 'visit') {
+    // more often beside someone dozing
+    const weights = atDesk.map((s) => (LOUNGE_STATES.has(s.staff.state) ? 3 : 1))
+    let q = Math.random() * weights.reduce((n, w) => n + w, 0)
+    const seat = atDesk.find((_, i) => (q -= weights[i]) < 0) ?? atDesk[0]
+    palu.seatKey = seat.key
+    palu.path = paluPath(paluDeskSpot(seat))
+    palu.restFor = between(60000, 120000)
+  } else {
+    const x = between(OUTER + 4, layout.artW - OUTER - 22)
+    const y = Math.random() < 0.5 ? c.laneTop + 6 : c.laneBottom + 6
+    palu.path = paluPath({ x: Math.round(x), y })
+    palu.restFor = between(3000, 8000)
+  }
+  palu.until = null
+}
+
+function stepPalu() {
+  if (!layout.common) return
+  const now = Date.now()
+  if (!palu) {
+    // the panel opens with him asleep in his bed
+    const spot = paluBedSpot()
+    palu = { ...spot, path: [], act: 'bed', until: now + between(20000, 60000), restLeft: false }
+  }
+  const next = palu.path[0]
+  if (next) {
+    const dx = next.x - palu.x
+    const dy = next.y - palu.y
+    if (dx) palu.left = dx < 0
+    palu.x += Math.max(-PALU_SPEED, Math.min(PALU_SPEED, dx))
+    palu.y += Math.max(-PALU_SPEED, Math.min(PALU_SPEED, dy))
+    if (Math.abs(next.x - palu.x) < 0.5 && Math.abs(next.y - palu.y) < 0.5) {
+      palu.x = next.x
+      palu.y = next.y
+      palu.path.shift()
+    }
+    return
+  }
+  if (palu.until === null) palu.until = now + palu.restFor
+  // stay put on his spot even if the floor shifted under him
+  const seat = palu.seatKey ? layout.seats.find((s) => s.key === palu.seatKey) : null
+  if (palu.act === 'bed') Object.assign(palu, paluBedSpot())
+  else if (seat) Object.assign(palu, paluDeskSpot(seat))
+  // time to move on, or the person he was napping beside got up
+  const leftDesk = palu.act === 'visit' && (!seat || walkers.has(seat.key))
+  if (now >= palu.until || leftDesk) paluNext()
+}
+
+function drawPalu() {
+  if (!palu) return
+  const at = painter(ctx, Math.round(palu.x), Math.round(palu.y))
+  if (palu.path.length) paluWalk(at, tick, palu.left)
+  else if (palu.act === 'wander') paluSit(painter(ctx, Math.round(palu.x) + 4, Math.round(palu.y) - 2), tick)
+  else paluLie(at, tick, true, palu.restLeft)
+}
+
 function drawSeat(seat) {
   const p = painter(ctx, seat.x, seat.y)
   person(p, seat.staff, tick, walkers.has(seat.key))
@@ -735,10 +862,11 @@ function draw() {
     const kind = w.mode === 'away' ? w.activity?.kind : null
     if (kind === 'lounge') lounger(at, seat.staff, tick, w.activity.pose)
     else if (kind === 'booth') walker(at, seat.staff, tick, false, w.left, null, 'phone')
-    else if (kind === 'foosball') walker(at, seat.staff, tick, false, w.left, null, 'play')
+    else if (kind === 'foosball') walker(at, seat.staff, tick, false, w.left, null, w.spot.back ? 'playBack' : 'play')
     else walker(at, seat.staff, tick, w.path.length > 0, w.left)
   }
   if (layout.common) for (const b of layout.common.booths) boothGlass(painter(ctx, b.bx, b.by))
+  drawPalu()
   const moving = [...visitors.values()].filter((v) => v.mode !== 'seated' && !(v.wait > 0)).sort((a, b) => a.y - b.y)
   for (const v of moving) {
     walker(painter(ctx, Math.round(v.x), Math.round(v.y)), v.spec, tick, true, v.left, roleColor(v.spec.role))
@@ -876,6 +1004,7 @@ setInterval(() => {
   tick++
   stepWalkers()
   stepVisitors()
+  stepPalu()
   if (snapshot) scenePrimed = true
   draw()
 }, FRAME_MS)
