@@ -13,11 +13,14 @@ who needs you and who is done, without having to click through every workspace.
 
 Requires Orca 1.4.246 or newer.
 
+In Orca, open Settings, then Plugins, and install Orca Tycoon (`palulabs.office-tycoon`) from the
+plugin directory. To run it from a clone instead:
+
 ```sh
 git clone https://github.com/palulabs/orca-tycoon.git
 cd orca-tycoon
 orca plugin dev load .        # prints an approval; re-run with the --approve flag it shows
-orca plugin open local.orca-tycoon --panel office
+orca plugin open local.office-tycoon --panel office
 ```
 
 The worker looks for the Orca CLI at `/Applications/Orca.app/Contents/Resources/bin/orca`, then
@@ -92,7 +95,7 @@ asks for no other capabilities.
 orca plugin validate .
 orca plugin test .            # src/worker.test.ts: ps rows to the office model
 orca plugin dev reload .      # after editing; the panel redraws
-orca plugin shot local.orca-tycoon --panel office --out shot.png
+orca plugin shot local.office-tycoon --panel office --out shot.png
 ```
 
 At the top of `src/panel.js`, `AWAY_STATES` and `LOUNGE_STATES` decide which states send an agent

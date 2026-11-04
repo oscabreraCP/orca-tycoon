@@ -1,6 +1,6 @@
 {
   "manifestVersion": 2,
-  "id": "orca-tycoon",
+  "id": "office-tycoon",
   "name": "Orca Tycoon",
   "version": "0.1.0",
   "description": "Every agent on your Orca host as a little pixel worker in a tycoon-style office.",
