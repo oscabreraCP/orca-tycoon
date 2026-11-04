@@ -1,0 +1,77 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      :root {
+        color-scheme: light dark;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        padding: 10px;
+        background: var(--orca-background, #15131f);
+        color: var(--orca-foreground, #e8e6f0);
+        font: 12px/1.35 ui-monospace, 'SF Mono', Menlo, monospace;
+      }
+      header {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 2px 8px;
+        margin-bottom: 8px;
+      }
+      h1 {
+        margin: 0;
+        font-size: 14px;
+        letter-spacing: 0.04em;
+      }
+      .stats {
+        color: var(--orca-muted-foreground, #9a97a8);
+      }
+      #office {
+        width: 100%;
+      }
+      #plan {
+        display: block;
+        image-rendering: pixelated;
+        cursor: pointer;
+      }
+      #detail {
+        position: sticky;
+        bottom: 0;
+        margin-top: 10px;
+        padding: 8px 10px;
+        background: var(--orca-popover, #221f30);
+        color: var(--orca-popover-foreground, inherit);
+        border: 2px solid var(--orca-muted, #3a3650);
+      }
+      #detail[hidden] {
+        display: none;
+      }
+      #detail .row {
+        color: var(--orca-muted-foreground, #9a97a8);
+      }
+      .empty,
+      .error {
+        color: var(--orca-muted-foreground, #9a97a8);
+        padding: 16px 0;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>ORCA TYCOON</h1>
+      <span class="stats" id="stats"></span>
+    </header>
+    <main id="office">
+      <div class="empty" id="message" hidden></div>
+      <canvas id="plan"></canvas>
+    </main>
+    <section id="detail" hidden></section>
+    <script type="module" src="./panel.js"></script>
+  </body>
+</html>

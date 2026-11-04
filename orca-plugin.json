@@ -1,0 +1,25 @@
+{
+  "manifestVersion": 2,
+  "id": "orca-tycoon",
+  "name": "Orca Tycoon",
+  "version": "0.1.0",
+  "description": "Every agent on your Orca host as a little pixel worker in a tycoon-style office.",
+  "engines": {
+    "orca": ">=1.4.246"
+  },
+  "execution": "trusted-worker",
+  "pluginApi": 1,
+  "main": "src/worker.ts",
+  "contributes": {
+    "panels": [
+      {
+        "id": "office",
+        "title": "Orca Tycoon",
+        "icon": "bot",
+        "entry": "src/panel.html",
+        "ui": "html"
+      }
+    ]
+  },
+  "capabilities": []
+}
