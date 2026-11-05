@@ -415,6 +415,74 @@ export function paluWalk(p, t, left) {
   m(13, 6, 1, 1, TAG)
 }
 
+/** Palú sniffing something, side-on, 18 x 10: standing still, head down, nose twitching. */
+export function paluSniff(p, t, left) {
+  const m = facing(p, 18, left)
+  const wag = t % 2
+  const twitch = (t >> 1) % 3 === 0 ? 1 : 0
+  // stub going fast: something smells interesting
+  m(1, 3 - wag, 1, 2, FUR)
+  m(2, 3, 12, 4, FUR)
+  m(3, 2, 10, 1, FUR)
+  m(3, 6, 11, 1, FUR_SHADE)
+  m(3, 7, 2, 2, FUR)
+  m(11, 7, 2, 2, FUR)
+  m(3, 8, 2, 1, FUR_SHADE)
+  m(11, 8, 2, 1, FUR_SHADE)
+  // head lowered to the ground, nose out
+  m(12, 2, 5, 5, FUR)
+  m(13, 1, 3, 1, FUR)
+  m(12, 3, 2, 4, FUR_SHADE)
+  m(15, 4, 1, 1, C.ink)
+  m(17, 6 - twitch, 1, 1, C.ink)
+  m(12, 6, 2, 1, COLLAR)
+}
+
+/** Palú trotting toward you, 10 x 11: round face first, short legs stepping under him. */
+export function paluWalkFront(p, t) {
+  const step = t % 2
+  // his body behind his head, legs going
+  p(2, 5, 6, 3, FUR)
+  p(2, 7, 6, 1, FUR_SHADE)
+  p(2, 8, 2, 1 + step, FUR)
+  p(6, 8, 2, 2 - step, FUR)
+  p(2, 8 + step, 2, 1, FUR_SHADE)
+  p(6, 9 - step, 2, 1, FUR_SHADE)
+  // round fluffy head, floppy ears, face
+  p(2, 0, 6, 5, FUR)
+  p(3, -1, 4, 1, FUR)
+  p(1, 1, 2, 4, FUR_SHADE)
+  p(7, 1, 2, 4, FUR_SHADE)
+  if (t % 36 !== 0) {
+    p(3, 2, 1, 1, C.ink)
+    p(6, 2, 1, 1, C.ink)
+  }
+  p(4, 3, 2, 1, C.ink)
+  p(3, 5, 4, 1, COLLAR)
+  p(4, 6, 1, 1, TAG)
+}
+
+/** Palú trotting away from you, 10 x 11: the back of his head, his collar and his stub. */
+export function paluWalkBack(p, t) {
+  const step = t % 2
+  const wag = (t >> 1) % 2
+  // head first, his back and rump in front of it
+  p(2, 0, 6, 4, FUR)
+  p(3, -1, 4, 1, FUR)
+  p(1, 1, 2, 4, FUR_SHADE)
+  p(7, 1, 2, 4, FUR_SHADE)
+  p(3, 4, 4, 1, COLLAR)
+  p(2, 5, 6, 3, FUR)
+  p(2, 7, 6, 1, FUR_SHADE)
+  p(2, 8, 2, 1 + step, FUR)
+  p(6, 8, 2, 2 - step, FUR)
+  p(2, 8 + step, 2, 1, FUR_SHADE)
+  p(6, 9 - step, 2, 1, FUR_SHADE)
+  // the little stub of a tail on his rump, wiggling side to side
+  p(4 + wag, 6, 2, 2, FUR_SHADE)
+  p(4 + wag, 6, 2, 1, FUR)
+}
+
 /** Palú sitting, facing you, 10 x 9: low to the ground. */
 export function paluSit(p, t) {
   // his stub of a tail peeks out on one side, wiggling
@@ -458,6 +526,20 @@ export function paluLie(p, t, asleep, left = false) {
 }
 
 /** Palú's dog bed, 24 x 9: a long cushion with a raised rim, to fit a long dog. */
+/** Palú's bowls, 13 x 4: kibble in the red one, water in the steel one. */
+export function dogBowls(p, t) {
+  p(0, 1, 6, 1, '#d65c4c')
+  p(1, 1, 4, 1, '#9a6a3a')
+  p(2, 0, 2, 1, '#b88350')
+  p(0, 2, 6, 1, '#c8483a')
+  p(1, 3, 4, 1, '#9e3328')
+  p(7, 1, 6, 1, '#a9b4c3')
+  p(8, 1, 4, 1, '#6fb7e0')
+  p(8 + ((t >> 2) % 4), 1, 1, 1, '#c4e6f7')
+  p(7, 2, 6, 1, '#8e9aab')
+  p(8, 3, 4, 1, '#6e7b8c')
+}
+
 export function dogBed(p) {
   p(2, 1, 20, 7, '#8a5a3c')
   p(0, 3, 24, 4, '#8a5a3c')

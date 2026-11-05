@@ -32,6 +32,10 @@ import {
   plant,
   walker,
   paluWalk,
+  paluWalkFront,
+  paluWalkBack,
+  paluSniff,
+  dogBowls,
   paluSit,
   paluLie,
   dogBed,
@@ -268,7 +272,6 @@ function computeLayout() {
   common.kitchen = { x: cornerX + 24, y: cornerY + 6, w: Math.max(30, common.x + floorW - cornerX - 24) }
   common.laneTop = bandY - 4
   common.laneBottom = bandY + bandH - 8
-  common.hallY = common.laneTop
   common.spots = []
   for (let sx = cornerX; sx + 8 <= common.x + floorW; sx += 9) common.spots.push({ x: sx, y: cornerY + 17, kind: 'coffee' })
   // the games row: a foosball table, and calling booths along the right
@@ -292,13 +295,22 @@ function computeLayout() {
   // The front door is in the left wall, level with the band.
   const doorY = bandY + 8
   // Palú's bed: in the games row between the foosball table and the booths when it fits, else in
-  // a corner of the lounge rug.
+  // a corner of the lounge rug. His bowls go beside the bed when there is room for both, else in
+  // the lounge's front corner by the door.
   const gapStart = fx + 34
   const gapEnd = common.x + floorW - boothCount * 16
-  common.bed =
-    gapEnd - gapStart >= 30
-      ? { x: gapStart + Math.floor((gapEnd - gapStart - 24) / 2), y: gamesY + 14 }
-      : { x: common.lounge.x + common.lounge.w - 27, y: common.lounge.y + 16 }
+  const gap = gapEnd - gapStart
+  if (gap >= 48) {
+    // bowls first, with room on their left to stand clear of the foosball table, then the bed
+    common.bowls = { x: gapStart + 8 + Math.floor((gap - 48) / 2), y: gamesY + 18 }
+    common.bed = { x: common.bowls.x + 16, y: gamesY + 14 }
+  } else {
+    common.bed =
+      gap >= 30
+        ? { x: gapStart + Math.floor((gap - 24) / 2), y: gamesY + 14 }
+        : { x: common.lounge.x + common.lounge.w - 27, y: common.lounge.y + 16 }
+    common.bowls = { x: common.lounge.x + 3, y: common.lounge.y + 19 }
+  }
 
   const bottom = pack(plans.slice(split), bandY + bandH + GAP)
   const rooms = []
@@ -306,7 +318,6 @@ function computeLayout() {
   for (const { plan, x, y: ry } of [...top.placed, ...bottom.placed]) {
     const { floor, lines, tableW, h } = plan
     const room = { x, y: ry, w: plan.w, h, name: floor.repo, carpet: pick(CARPETS, floor.repo), notes: [] }
-    room.lane = ry < bandY ? common.laneTop : common.laneBottom
     lines.forEach((line, li) => {
       const lineW = line.reduce((n, t) => n + tableW(t), 0) + TABLE_GAP * (line.length - 1)
       let tx = room.x + GLASS + PAD + Math.floor((plan.inner - lineW) / 2)
@@ -398,25 +409,84 @@ function drawRoom(p, room) {
     const sy = y + 2 + ((i * 53) % (h - 4))
     p(sx, sy, 1, 1, 'rgba(255,255,255,0.08)')
   }
-  // name plaque, whiteboard of sticky notes, a plant, a bookshelf
+  // name plaque and a whiteboard of sticky notes; the plant and bookshelf stand on the floor and
+  // are drawn with the scenery, in depth order
   p(x + 3, y + 3, Math.min(w - 40, 56), 7, '#2a2633')
   const boardW = Math.min(26, w - 70)
   if (boardW > 8) whiteboard(painter(ctx, x + w - boardW - 4, y + 3), boardW, room.notes)
-  plant(painter(ctx, x + 3, y + h - 11))
-  if (w > 90 && h > 50) bookshelf(painter(ctx, x + w - 15, y + h - 12))
 }
 
+/** Where an area's plant (7 x 9) and bookshelf (12 x 9, roomy areas only) stand. */
+function roomDecor(room) {
+  const { x, y, w, h } = room
+  const decor = [{ kind: 'plant', x: x + 3, y: y + h - 11 }]
+  if (w > 90 && h > 50) decor.push({ kind: 'bookshelf', x: x + w - 15, y: y + h - 12 })
+  return decor
+}
+
+/** Everything standing on the floor, each with the box it covers and the row its base is on. */
+function commonItems(c) {
+  const decor = layout.rooms.flatMap(roomDecor).map((d) =>
+    d.kind === 'plant'
+      ? { box: [d.x, d.y, 7, 9], base: d.y + 9, draw: () => plant(painter(ctx, d.x, d.y)) }
+      : { box: [d.x, d.y, 12, 9], base: d.y + 9, draw: () => bookshelf(painter(ctx, d.x, d.y)) }
+  )
+  if (!c) return decor.sort((a, b) => a.base - b.base)
+  const playing = [...walkers.values()].filter((w) => w.mode === 'away' && w.activity?.kind === 'foosball').length >= 2
+  const { lounge: l, kitchen: k, foosball: f, cooler, coffee, bowls } = c
+  return [
+    { box: [bowls.x, bowls.y, 13, 4], base: bowls.y + 4, draw: () => dogBowls(painter(ctx, bowls.x, bowls.y), tick) },
+    { box: [l.x, l.y, l.w, 26], base: l.y + 14, draw: () => lounge(painter(ctx, l.x, l.y), l.w) },
+    { box: [k.x, k.y - 6, k.w, 18], base: k.y + 12, draw: () => kitchen(painter(ctx, k.x, k.y), k.w) },
+    ...c.booths.map((b) => ({ box: [b.bx, b.by, 13, 24], base: b.by + 24, draw: () => booth(painter(ctx, b.bx, b.by)) })),
+    { box: [f.x - 2, f.y - 2, 32, 18], base: f.y + 14, draw: () => foosball(painter(ctx, f.x, f.y), tick, playing) },
+    { box: [cooler.x, cooler.y, 7, 16], base: cooler.y + 16, draw: () => waterCooler(painter(ctx, cooler.x, cooler.y), tick) },
+    { box: [coffee.x, coffee.y, 9, 14], base: coffee.y + 14, draw: () => coffeeMachine(painter(ctx, coffee.x, coffee.y), tick) },
+    ...decor
+  ].sort((a, b) => a.base - b.base)
+}
+
+const overlaps = ([ax, ay, aw, ah], [bx, by, bw, bh]) => ax < bx + bw && bx < ax + aw && ay < by + bh && by < ay + ah
+
+/** Palú and everyone walking, each with the box they cover and the row their feet are on. */
+function movers() {
+  const list = []
+  const person = (id, x, y, draw) => {
+    const at = painter(ctx, Math.round(x), Math.round(y))
+    list.push({ id, box: [Math.round(x), Math.round(y) - 1, 8, 16], base: Math.round(y) + 15, draw: () => draw(at) })
+  }
+  for (const seat of layout.seats) {
+    const w = walkers.get(seat.key)
+    if (w?.path.length) person(seat.key, w.x, w.y, (at) => walker(at, seat.staff, tick, true, w.left))
+  }
+  for (const [key, v] of visitors) {
+    if (v.mode !== 'seated' && !(v.wait > 0)) person(key, v.x, v.y, (at) => walker(at, v.spec, tick, true, v.left, roleColor(v.spec.role)))
+  }
+  const dog = paluBox()
+  if (dog) list.push({ id: 'palu', ...dog, draw: drawPalu })
+  return list.sort((a, b) => a.base - b.base)
+}
+
+/** Draws the commons; returns who was drawn among the furniture, behind something. */
 function drawCommon() {
   const c = layout.common
-  if (!c) return
-  lounge(painter(ctx, c.lounge.x, c.lounge.y), c.lounge.w)
-  kitchen(painter(ctx, c.kitchen.x, c.kitchen.y), c.kitchen.w)
-  for (const b of c.booths) booth(painter(ctx, b.bx, b.by))
-  const playing = [...walkers.values()].filter((w) => w.mode === 'away' && w.activity?.kind === 'foosball').length >= 2
-  foosball(painter(ctx, c.foosball.x, c.foosball.y), tick, playing)
-  waterCooler(painter(ctx, c.cooler.x, c.cooler.y), tick)
-  dogBed(painter(ctx, c.bed.x, c.bed.y))
-  coffeeMachine(painter(ctx, c.coffee.x, c.coffee.y), tick)
+  // his bed is on the floor, under everything
+  if (c) dogBed(painter(ctx, c.bed.x, c.bed.y))
+  const items = commonItems(c)
+  const before = new Map() // item -> who passes just behind it
+  for (const m of movers()) {
+    const inFront = items.find((i) => i.base > m.base && overlaps(i.box, m.box))
+    if (inFront) before.set(inFront, [...(before.get(inFront) ?? []), m])
+  }
+  const behind = new Set()
+  for (const item of items) {
+    for (const m of before.get(item) ?? []) {
+      m.draw()
+      behind.add(m.id)
+    }
+    item.draw()
+  }
+  return behind
 }
 
 // ---- walking to the coffee corner ------------------------------------------------------------
@@ -426,12 +496,9 @@ function homeOf(seat) {
   return { x: seat.x + 6, y: seat.y + SEAT_H + LABEL_H - 4 }
 }
 
-/** Along the area's aisle to the corridor beside it, to the band's lane, across to the spot. */
-function route(seat, spot) {
-  const home = homeOf(seat)
-  const lane = seat.room.lane
-  const sideX = sideOf(seat, spot.x)
-  return [home, { x: sideX, y: home.y }, { x: sideX, y: lane }, { x: spot.x, y: lane }, { x: spot.x, y: spot.y }]
+/** From where someone is to `to`, around the desks and furniture in the way. */
+function walkPath(from, to) {
+  return floorRoute(from, to, 'people') ?? [{ x: to.x, y: to.y }]
 }
 
 function hashOf(text) {
@@ -533,20 +600,20 @@ function stepWalkers() {
       w = { x: spot.x, y: spot.y, path: [], mode: 'away', spot, activity, left: spot.left }
       walkers.set(seat.key, w)
     } else if (spot && !w) {
-      const path = route(seat, spot)
-      w = { ...path[0], path: path.slice(1), mode: 'out', spot, activity }
+      const home = homeOf(seat)
+      w = { ...home, path: walkPath(home, spot), mode: 'out', spot, activity }
       walkers.set(seat.key, w)
     } else if (spot && w && w.mode !== 'back' && (w.spot.x !== spot.x || w.spot.y !== spot.y)) {
       // a new spot in the band (the corner reshuffled, or coffee turned into a nap)
-      w.path = [{ x: spot.x, y: w.y }, { x: spot.x, y: spot.y }]
+      w.path = walkPath(w, spot)
       w.mode = 'out'
       w.spot = spot
     } else if (spot && w && w.mode === 'back') {
-      w.path = route(seat, spot).slice(1)
+      w.path = walkPath(w, spot)
       w.mode = 'out'
       w.spot = spot
     } else if (!spot && w && w.mode !== 'back') {
-      w.path = route(seat, w.spot).reverse().slice(1)
+      w.path = walkPath(w, homeOf(seat))
       w.mode = 'back'
     }
     if (!w) continue
@@ -573,47 +640,27 @@ function stepWalkers() {
 
 // ---- specialists coming and going -------------------------------------------------------------
 
-function sideOf(seat, towardX) {
-  const room = seat.room
-  return towardX > room.x + room.w / 2
-    ? Math.min(layout.artW - OUTER - 8, room.x + room.w + Math.floor(GAP / 2) - 4)
-    : Math.max(OUTER, room.x - Math.ceil(GAP / 2) - 4)
-}
-
 const DOOR_LANE_X = OUTER + 1
 
-/** Waypoints from the front door to a stool: along the band's lane, then the area's aisle. */
-function routeIn(seat, stoolAt) {
-  const doorY = layout.building.doorY
-  const lane = seat.room.lane
-  const sideX = sideOf(seat, 0)
-  const aisleY = seat.y + SEAT_H + LABEL_H - 8
-  return {
-    start: { x: -8, y: doorY },
-    path: [
-      { x: DOOR_LANE_X, y: doorY },
-      { x: DOOR_LANE_X, y: lane },
-      { x: sideX, y: lane },
-      { x: sideX, y: aisleY },
-      { x: stoolAt.x - 1, y: aisleY },
-      { x: stoolAt.x - 1, y: seat.y + 6 }
-    ],
-    sideX,
-    aisleY,
-    lane
-  }
+/** Where a specialist waits in the aisle before stepping onto the stool, and the stool itself. */
+function stoolStops(seat, stoolAt) {
+  return { aisle: { x: stoolAt.x - 1, y: seat.y + SEAT_H + LABEL_H - 8 }, on: { x: stoolAt.x - 1, y: seat.y + 6 } }
 }
 
+const doorStep = () => ({ x: DOOR_LANE_X, y: layout.building.doorY })
+
+/** To the stool, from wherever they are; from outside, through the front door first. */
+function routeIn(v, seat, stoolAt) {
+  const { aisle, on } = stoolStops(seat, stoolAt)
+  const from = v.x < DOOR_LANE_X ? doorStep() : v
+  return [...(from === v ? [] : [from]), ...walkPath(from, aisle), on]
+}
+
+/** Off the stool into the aisle, across the floor to the front door, and out. */
 function routeOut(v) {
-  const doorY = layout.building.doorY
-  return [
-    { x: v.x, y: v.aisleY },
-    { x: v.sideX, y: v.aisleY },
-    { x: v.sideX, y: v.lane },
-    { x: DOOR_LANE_X, y: v.lane },
-    { x: DOOR_LANE_X, y: doorY },
-    { x: -10, y: doorY }
-  ]
+  const door = doorStep()
+  const from = v.mode === 'seated' ? v.aisle : v
+  return [...(from === v ? [] : [from]), ...walkPath(from, door), { x: -10, y: door.y }]
 }
 
 function stepVisitors() {
@@ -626,31 +673,28 @@ function stepVisitors() {
   }
   for (const [key, { seat, spec, stoolAt }] of wanted) {
     let v = visitors.get(key)
-    const r = routeIn(seat, stoolAt)
+    const stops = stoolStops(seat, stoolAt)
     if (!v) {
       // Already here when the panel opened: seated straight away. Later arrivals walk in.
       // Several arriving together come through the door one after another.
-      const queued = [...visitors.values()].filter((o) => o.mode === 'in' && o.path.length >= r.path.length).length
+      const queued = [...visitors.values()].filter((o) => o.mode === 'in' && o.x < DOOR_LANE_X).length
+      const outside = { x: -8, y: layout.building.doorY }
       v = scenePrimed
-        ? { spec, ...r.start, path: r.path, mode: 'in', sideX: r.sideX, aisleY: r.aisleY, lane: r.lane, stoolAt, wait: queued * 10 }
-        : { spec, x: stoolAt.x - 1, y: seat.y + 6, path: [], mode: 'seated', sideX: r.sideX, aisleY: r.aisleY, lane: r.lane, stoolAt }
+        ? { spec, ...outside, path: routeIn(outside, seat, stoolAt), mode: 'in', aisle: stops.aisle, stoolAt, wait: queued * 10 }
+        : { spec, ...stops.on, path: [], mode: 'seated', aisle: stops.aisle, stoolAt }
       visitors.set(key, v)
       continue
     }
     v.spec = spec
-    v.sideX = r.sideX
-    v.aisleY = r.aisleY
-    v.lane = r.lane
+    v.aisle = stops.aisle
     if (v.mode === 'out') {
       // called back in before reaching the door
-      v.path = [{ x: v.x, y: v.lane }, ...r.path.slice(2)]
+      v.path = routeIn(v, seat, stoolAt)
       v.mode = 'in'
     } else if (v.stoolAt.x !== stoolAt.x || v.stoolAt.y !== stoolAt.y) {
       // the desk moved (a stool was added or taken away): keep walking, to the new stool
-      if (v.mode === 'seated') {
-        v.x = stoolAt.x - 1
-        v.y = seat.y + 6
-      } else v.path.splice(-2, 2, ...r.path.slice(-2))
+      if (v.mode === 'seated') Object.assign(v, stops.on)
+      else v.path = routeIn(v, seat, stoolAt)
     }
     v.stoolAt = stoolAt
   }
@@ -687,6 +731,7 @@ function stepVisitors() {
 // more often beside someone who is dozing too.
 
 const PALU_SPEED = 1
+const PALU_AISLE = 3
 let palu = null
 
 const between = (lo, hi) => lo + Math.random() * (hi - lo)
@@ -701,40 +746,274 @@ function paluDeskSpot(seat) {
   return { x: seat.x + 1, y: seat.y + SEAT_H + LABEL_H }
 }
 
-function paluPath(to) {
+/** His two lanes: the top one runs just behind the commons furniture, the bottom one in front. */
+function paluLanes() {
   const c = layout.common
-  const lanes = [c.laneTop + 6, c.laneBottom + 6]
-  const lane = lanes.reduce((a, b) => (Math.abs(b - to.y) < Math.abs(a - to.y) ? b : a))
-  return [{ x: palu.x, y: lane }, { x: to.x, y: lane }, { x: to.x, y: to.y }]
+  return [c.laneTop, c.laneBottom + 6]
+}
+
+// ---- finding the way across the floor ---------------------------------------------------------
+// Everyone walks the open floor: a grid search over where their feet may go, around the floor
+// space each desk and piece of furniture stands on. They may pass behind things (depth order
+// draws them behind), never through them.
+
+const GRID = 2
+const TURN_COST = 10 // what a turn costs, in steps: long straight runs read as walking with purpose
+const BLOCKED_COST = 1000
+
+/** Where the feet are at (x, y): Palú side-on or up and down (narrower), and a person. */
+const FEET = {
+  palu: { side: (x, y) => [x + 1, y + 6, 16, 3], upright: (x, y) => [x + 5, y + 6, 8, 3] },
+  people: { side: (x, y) => [x + 1, y + 12, 6, 3], upright: (x, y) => [x + 1, y + 12, 6, 3] }
+}
+
+/** The floor each obstacle stands on: [x, y, w, h], in art pixels. */
+function floorObstacles(who) {
+  const c = layout.common
+  // a person in the aisle stands tall, feet level with the heads of the next row down: for them
+  // a desk starts a little lower
+  const top = who === 'people' ? 5 : 0
+  const boxes = layout.seats.map((s) => [s.x - 2, s.y + top, DESK_W + s.stools.length * STOOL_W + 2, SEAT_H + LABEL_H - top])
+  for (const d of layout.rooms.flatMap(roomDecor)) {
+    boxes.push(d.kind === 'plant' ? [d.x + 1, d.y + 5, 5, 4] : [d.x, d.y + 4, 12, 5])
+  }
+  // each area's name plaque and whiteboard: walk in front of them, not over them
+  for (const { x, y, w } of layout.rooms) {
+    const boardW = Math.min(26, w - 70)
+    boxes.push([x + 3, y + 3, Math.min(w - 40, 56), 7])
+    if (boardW > 8) boxes.push([x + w - boardW - 4, y + 3, boardW, 7])
+  }
+  if (!c) return boxes
+  const { lounge: l, kitchen: k, foosball: f, cooler, coffee } = c
+  const mid = l.x + Math.floor(l.w / 2)
+  boxes.push(
+    [l.x + 2, l.y + 3, l.w - 4, 11], // the sofa
+    [mid - 8, l.y + 17, 16, 4], // the coffee table
+    [k.x, k.y + 4, k.w, 8], // the counter and the fridge
+    [cooler.x, cooler.y + 10, 7, 6],
+    [coffee.x, coffee.y + 8, 9, 6],
+    [f.x, f.y, 28, 14],
+    [c.bowls.x, c.bowls.y + 1, 13, 3],
+    ...c.booths.map((b) => [b.bx, b.by + 6, 13, 18])
+  )
+  return boxes
+}
+
+function floorClear(box, blocks) {
+  const [x, y, w, h] = box
+  const inside = x >= OUTER && y >= OUTER && x + w <= layout.artW - OUTER && y + h <= layout.building.h - OUTER
+  return inside && !blocks.some((b) => overlaps(b, box))
+}
+
+/**
+ * Places worth a sniff: beside each plant and bookshelf, and at the ends and corners of the commons
+ * furniture. Each is where he stands, side-on, with his nose just touching the thing.
+ */
+function paluSniffSpots() {
+  const c = layout.common
+  // nose to the left of him touching x (facing left), or to the right (facing right); paws on row y
+  const fromRight = (x, base) => ({ x, y: base - 9, left: true })
+  const fromLeft = (x, base) => ({ x: x - 18, y: base - 9, left: false })
+  const spots = []
+  for (const d of layout.rooms.flatMap(roomDecor)) {
+    if (d.kind === 'plant') spots.push(fromRight(d.x + 7, d.y + 9))
+    else spots.push(fromLeft(d.x, d.y + 9))
+  }
+  if (c) {
+    const { lounge: l, kitchen: k, foosball: f, cooler, coffee } = c
+    spots.push(
+      fromLeft(l.x + 2, l.y + 14), // the sofa's arms
+      fromRight(l.x + l.w - 2, l.y + 14),
+      fromLeft(cooler.x, cooler.y + 16),
+      fromRight(coffee.x + 9, coffee.y + 14),
+      fromLeft(k.x, k.y + 12), // the end of the kitchen counter
+      fromLeft(f.x, f.y + 14), // the foosball table's legs
+      fromRight(f.x + 28, f.y + 14),
+      ...c.booths.slice(-1).map((b) => fromLeft(b.bx, b.by + 24))
+    )
+  }
+  const blocks = floorObstacles('palu')
+  return spots.filter((s) => floorClear(FEET.palu.side(s.x, s.y), blocks))
+}
+
+const grids = new WeakMap() // layout -> where Palú's and people's feet may go, side-on and upright
+
+function floorGrid(who) {
+  let mine = grids.get(layout)
+  if (!mine) grids.set(layout, (mine = {}))
+  if (mine[who]) return mine[who]
+  const G = GRID
+  const W = Math.ceil(layout.artW / G)
+  const H = Math.ceil(layout.building.h / G)
+  const blocks = floorObstacles(who)
+  const feet = FEET[who]
+  const side = new Uint8Array(W * H)
+  const upright = new Uint8Array(W * H)
+  for (let gy = 0; gy < H; gy++) {
+    for (let gx = 0; gx < W; gx++) {
+      side[gy * W + gx] = floorClear(feet.side(gx * G, gy * G), blocks) ? 1 : 0
+      upright[gy * W + gx] = floorClear(feet.upright(gx * G, gy * G), blocks) ? 1 : 0
+    }
+  }
+  return (mine[who] = { W, H, side, upright })
+}
+
+/** Waypoints from `from` to `to`, around everything in the way. */
+function floorRoute(from, to, who) {
+  const G = GRID
+  const { W, H, side, upright } = floorGrid(who)
+  const snap = (v, n) => Math.max(0, Math.min(n - 1, Math.round(v / G)))
+  const start = snap(from.y, H) * W + snap(from.x, W)
+  const goal = snap(to.y, H) * W + snap(to.x, W)
+  // Dijkstra over (cell, heading); headings 0,1 move along x, 2,3 along y
+  const STEP = [1, -1, W, -W]
+  const cost = new Float64Array(W * H * 4).fill(Infinity)
+  const prev = new Int32Array(W * H * 4).fill(-1)
+  const heap = []
+  const push = (d, node) => {
+    heap.push([d, node])
+    for (let i = heap.length - 1; i > 0; ) {
+      const j = (i - 1) >> 1
+      if (heap[j][0] <= heap[i][0]) break
+      ;[heap[i], heap[j]] = [heap[j], heap[i]]
+      i = j
+    }
+  }
+  const pop = () => {
+    const top = heap[0]
+    const last = heap.pop()
+    if (heap.length) {
+      heap[0] = last
+      for (let i = 0; ; ) {
+        const a = 2 * i + 1
+        const b = a + 1
+        let m = i
+        if (a < heap.length && heap[a][0] < heap[m][0]) m = a
+        if (b < heap.length && heap[b][0] < heap[m][0]) m = b
+        if (m === i) break
+        ;[heap[i], heap[m]] = [heap[m], heap[i]]
+        i = m
+      }
+    }
+    return top
+  }
+  for (let h = 0; h < 4; h++) {
+    cost[start * 4 + h] = 0
+    push(0, start * 4 + h)
+  }
+  let end = -1
+  while (heap.length) {
+    const [d, node] = pop()
+    if (d > cost[node]) continue
+    const cell = node >> 2
+    if (cell === goal) {
+      end = node
+      break
+    }
+    const heading = node & 3
+    const cx = cell % W
+    for (let h = 0; h < 4; h++) {
+      const next = cell + STEP[h]
+      if (h < 2 ? Math.floor(next / W) !== Math.floor(cell / W) : next < 0 || next >= W * H) continue
+      if (h === 0 && cx === W - 1) continue
+      // a blocked step is not a wall, only very dear: he can always get out of a snug spot (his
+      // nap by a desk, a seat on the sofa), but never cuts through furniture while there is a way round
+      const free = h < 2 ? side : upright
+      const nd = d + (free[next] ? 1 : BLOCKED_COST) + (h === heading ? 0 : TURN_COST)
+      const key = next * 4 + h
+      if (nd < cost[key]) {
+        cost[key] = nd
+        prev[key] = node
+        push(nd, key)
+      }
+    }
+  }
+  if (end < 0) return null
+  // walk back, keeping only the corners
+  const cells = []
+  for (let node = end; node >= 0; node = prev[node]) cells.push(node >> 2)
+  cells.reverse()
+  const points = cells.map((cell) => ({ x: (cell % W) * G, y: Math.floor(cell / W) * G }))
+  // from the nearest cell, so the first leg runs along a row that is clear
+  const corners = [points[0]]
+  for (let i = 1; i < points.length; i++) {
+    const a = points[i - 1]
+    const b = points[i]
+    const n = points[i + 1]
+    if (!n || (a.x === b.x) !== (b.x === n.x)) corners.push(b)
+  }
+  corners.push({ x: to.x, y: to.y })
+  return corners
+}
+
+/** To `to`; desk visits come along the aisle and shuffle the last pixels into the spot. */
+function paluPath(to, viaAisle = false) {
+  if (!viaAisle) return floorRoute(palu, to, 'palu')
+  const path = floorRoute(palu, { x: to.x, y: to.y - PALU_AISLE }, 'palu')
+  return path && [...path, { x: to.x, y: to.y }]
+}
+
+/** Where he stands to eat (nose in the kibble, from the left) or drink (from the right). */
+function paluBowlSpots() {
+  const b = layout.common.bowls
+  const spots = [
+    { x: b.x + 2 - 17, y: b.y + 3 - 9, left: false },
+    { x: b.x + 10, y: b.y + 3 - 9, left: true }
+  ]
+  const blocks = floorObstacles('palu').filter((o) => !(o[0] === b.x && o[1] === b.y + 1))
+  const clear = spots.filter((s) => floorClear(FEET.palu.side(s.x, s.y), blocks))
+  return clear.length ? clear : spots.slice(0, 1)
 }
 
 function paluNext() {
-  const c = layout.common
   const atDesk = layout.seats.filter((s) => !walkers.has(s.key))
-  const options = [{ act: 'wander', w: 3 }, { act: 'bed', w: 1 }]
+  const sniffs = paluSniffSpots()
+  const options = [{ act: 'wander', w: 2 }, { act: 'bed', w: 1 }, { act: 'eat', w: 1 }]
+  if (sniffs.length) options.push({ act: 'sniff', w: 3 })
   if (atDesk.length) options.push({ act: 'visit', w: 2 })
   let r = Math.random() * options.reduce((n, o) => n + o.w, 0)
   const act = options.find((o) => (r -= o.w) < 0)?.act ?? 'wander'
   palu.act = act
   palu.seatKey = null
   palu.restLeft = Math.random() < 0.5
+  let path = null
   if (act === 'bed') {
-    palu.path = paluPath(paluBedSpot())
+    path = paluPath(paluBedSpot())
     palu.restFor = between(40000, 90000)
+  } else if (act === 'sniff') {
+    const spot = sniffs[Math.floor(Math.random() * sniffs.length)]
+    path = paluPath(spot)
+    palu.restLeft = spot.left
+    palu.restFor = between(2500, 6000)
+  } else if (act === 'eat') {
+    const bowls = paluBowlSpots()
+    const spot = bowls[Math.floor(Math.random() * bowls.length)]
+    path = paluPath(spot)
+    palu.restLeft = spot.left
+    palu.restFor = between(3000, 7000)
   } else if (act === 'visit') {
     // more often beside someone dozing
     const weights = atDesk.map((s) => (LOUNGE_STATES.has(s.staff.state) ? 3 : 1))
     let q = Math.random() * weights.reduce((n, w) => n + w, 0)
     const seat = atDesk.find((_, i) => (q -= weights[i]) < 0) ?? atDesk[0]
     palu.seatKey = seat.key
-    palu.path = paluPath(paluDeskSpot(seat))
+    path = paluPath(paluDeskSpot(seat), true)
     palu.restFor = between(60000, 120000)
   } else {
-    const x = between(OUTER + 4, layout.artW - OUTER - 22)
-    const y = Math.random() < 0.5 ? c.laneTop + 6 : c.laneBottom + 6
-    palu.path = paluPath({ x: Math.round(x), y })
+    for (let tries = 0; tries < 6 && !path; tries++) {
+      const x = Math.round(between(OUTER + 4, layout.artW - OUTER - 22))
+      const y = paluLanes()[Math.random() < 0.5 ? 0 : 1]
+      path = paluPath({ x, y })
+    }
     palu.restFor = between(3000, 8000)
   }
+  // nowhere he can get to: a short sit where he is, then he thinks again
+  if (!path) {
+    palu.act = 'wander'
+    palu.seatKey = null
+    palu.restFor = between(3000, 8000)
+  }
+  palu.path = path ?? []
   palu.until = null
 }
 
@@ -750,7 +1029,11 @@ function stepPalu() {
   if (next) {
     const dx = next.x - palu.x
     const dy = next.y - palu.y
-    if (dx) palu.left = dx < 0
+    if (Math.abs(dx) >= 0.5) {
+      palu.left = dx < 0
+      palu.dir = 'side'
+    } else if (Math.abs(dy) > PALU_AISLE) palu.dir = dy > 0 ? 'down' : 'up'
+    // the little step between the aisle and his spot is a shuffle, not a turn
     palu.x += Math.max(-PALU_SPEED, Math.min(PALU_SPEED, dx))
     palu.y += Math.max(-PALU_SPEED, Math.min(PALU_SPEED, dy))
     if (Math.abs(next.x - palu.x) < 0.5 && Math.abs(next.y - palu.y) < 0.5) {
@@ -770,10 +1053,26 @@ function stepPalu() {
   if (now >= palu.until || leftDesk) paluNext()
 }
 
+/** The box Palú covers and the row his paws are on, for drawing him behind furniture. */
+function paluBox() {
+  if (!palu) return null
+  const x = Math.round(palu.x)
+  const y = Math.round(palu.y)
+  if (palu.path.length && palu.dir !== 'side') return { box: [x + 5, y - 2, 8, 11], base: y + 9 }
+  if (palu.path.length) return { box: [x, y - 1, 18, 10], base: y + 9 }
+  if (palu.act === 'sniff' || palu.act === 'eat') return { box: [x, y - 1, 18, 10], base: y + 9 }
+  if (palu.act === 'wander') return { box: [x + 5, y - 3, 8, 10], base: y + 7 }
+  return { box: [x, y, 18, 6], base: y + 6 }
+}
+
 function drawPalu() {
   if (!palu) return
   const at = painter(ctx, Math.round(palu.x), Math.round(palu.y))
-  if (palu.path.length) paluWalk(at, tick, palu.left)
+  const upright = painter(ctx, Math.round(palu.x) + 4, Math.round(palu.y) - 1)
+  if (palu.path.length && palu.dir === 'down') paluWalkFront(upright, tick)
+  else if (palu.path.length && palu.dir === 'up') paluWalkBack(upright, tick)
+  else if (palu.path.length) paluWalk(at, tick, palu.left)
+  else if (palu.act === 'sniff' || palu.act === 'eat') paluSniff(at, tick, palu.restLeft)
   else if (palu.act === 'wander') paluSit(painter(ctx, Math.round(palu.x) + 4, Math.round(palu.y) - 2), tick)
   else paluLie(at, tick, true, palu.restLeft)
 }
@@ -835,7 +1134,7 @@ function draw() {
   const p = painter(ctx)
   drawBuilding(p)
   for (const room of layout.rooms) drawRoom(p, room)
-  drawCommon()
+  const behind = drawCommon()
 
   // desks: people first, then the desk over their laps, then monitors and hands
   for (const seat of layout.seats) drawSeat(seat)
@@ -854,7 +1153,7 @@ function draw() {
   }
 
   // people up and about, nearest the bottom drawn last
-  const walking = layout.seats.filter((seat) => walkers.has(seat.key))
+  const walking = layout.seats.filter((seat) => walkers.has(seat.key) && !behind.has(seat.key))
   walking.sort((a, b) => walkers.get(a.key).y - walkers.get(b.key).y)
   for (const seat of walking) {
     const w = walkers.get(seat.key)
@@ -866,8 +1165,11 @@ function draw() {
     else walker(at, seat.staff, tick, w.path.length > 0, w.left)
   }
   if (layout.common) for (const b of layout.common.booths) boothGlass(painter(ctx, b.bx, b.by))
-  drawPalu()
-  const moving = [...visitors.values()].filter((v) => v.mode !== 'seated' && !(v.wait > 0)).sort((a, b) => a.y - b.y)
+  if (!behind.has('palu')) drawPalu()
+  const moving = [...visitors]
+    .filter(([key, v]) => v.mode !== 'seated' && !(v.wait > 0) && !behind.has(key))
+    .map(([, v]) => v)
+    .sort((a, b) => a.y - b.y)
   for (const v of moving) {
     walker(painter(ctx, Math.round(v.x), Math.round(v.y)), v.spec, tick, true, v.left, roleColor(v.spec.role))
   }
@@ -978,10 +1280,30 @@ function apply(next) {
 
 // ---- input and loops -------------------------------------------------------------------------
 
-canvas.addEventListener('click', (event) => {
+function artPoint(event) {
   const rect = canvas.getBoundingClientRect()
-  const ax = (event.clientX - rect.left) / layout.scale
-  const ay = (event.clientY - rect.top) / layout.scale
+  return [(event.clientX - rect.left) / layout.scale, (event.clientY - rect.top) / layout.scale]
+}
+
+/** Palú when the point is on him (with a pixel to spare, he is small). */
+function onPalu(ax, ay) {
+  const dog = paluBox()
+  return Boolean(dog) && overlaps(dog.box, [ax - 1, ay - 1, 2, 2])
+}
+
+canvas.addEventListener('mousemove', (event) => {
+  const [ax, ay] = artPoint(event)
+  const onSeat = layout.seats.some((u) => ax >= u.x && ax < u.x + SEAT_W && ay >= u.y && ay < u.y + SEAT_H + LABEL_H)
+  canvas.style.cursor = onSeat || onPalu(ax, ay) ? 'pointer' : ''
+})
+
+canvas.addEventListener('click', (event) => {
+  const [ax, ay] = artPoint(event)
+  // a pat wakes Palú: if he is resting, he gets up and goes on to whatever he does next
+  if (onPalu(ax, ay)) {
+    if (!palu.path.length) paluNext()
+    return
+  }
   const hit = layout.seats.find((u) => ax >= u.x && ax < u.x + SEAT_W && ay >= u.y && ay < u.y + SEAT_H + LABEL_H)
   selected = hit && hit.key !== selected ? hit.key : null
   renderDetail()

@@ -2,8 +2,33 @@
   "manifestVersion": 2,
   "id": "office-tycoon",
   "name": "Orca Tycoon",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Every agent on your Orca host as a little pixel worker in a tycoon-style office.",
+  "author": {
+    "name": "Palu Labs",
+    "url": "https://github.com/palulabs"
+  },
+  "repository": "https://github.com/palulabs/orca-tycoon",
+  "homepage": "https://github.com/palulabs/orca-tycoon",
+  "icon": "docs/catalog/icon.png",
+  "cover": {
+    "path": "docs/catalog/cover.png",
+    "alt": "The commons of a pixel office: agents on the sofa and at the coffee corner, a foosball table, and Palú the dog eating from his bowl"
+  },
+  "screenshots": [
+    {
+      "path": "docs/catalog/office.png",
+      "alt": "The whole office: five teams at their desks around a commons band with a lounge, kitchen, foosball table and calling booths"
+    },
+    {
+      "path": "docs/catalog/commons.png",
+      "alt": "A team at work with a speech bubble from an agent that just finished, and Palú asleep in his bed"
+    },
+    {
+      "path": "docs/catalog/desks.png",
+      "alt": "Desks showing agent states: a red flashing screen for blocked, an amber question mark for waiting, and specialists on stools"
+    }
+  ],
   "engines": {
     "orca": ">=1.4.246"
   },

@@ -46,9 +46,11 @@ The worker looks for the Orca CLI at `/Applications/Orca.app/Contents/Resources/
   place is full they take their next choice, and when everything is full they stay at their desk.
   When an agent gets new work, it walks back and sits down.
 - **Palú is the office dog.** A white, fluffy, long and low bichon with a little stub of a tail
-  and a red collar. He wanders the floor, naps in his bed in the commons, and now and then lies
-  down in front of someone's desk for a nap, more often beside someone who is dozing too. He is
-  only there for company and never changes what anyone does.
+  and a red collar. He wanders the floor, sniffs the plants, the bookshelves and the corners of
+  the furniture, visits his food and water bowls, naps in his bed in the commons, and now and
+  then lies down in front of someone's desk for a nap, more often beside someone who is dozing
+  too. Click him while he rests and he gets up and goes on to whatever he does next. He is only
+  there for company and never changes what anyone does.
 - **Agents speak up.** When an agent finishes, a speech bubble shows the first line of its last
   reply. When one starts waiting for you it says "Need you!", and when it gets stuck it says
   "Stuck!".
