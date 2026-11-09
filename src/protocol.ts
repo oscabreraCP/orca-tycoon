@@ -22,6 +22,8 @@ export type Staff = {
   state: StaffState
   /** What the agent says when you click it: "I'm editing panel.js", "I'm watching CI run". */
   line: string
+  /** The nameplate on its desk: a ticket key, an issue number or the first word of its title. */
+  label: string
   since: number
   specialists: Specialist[]
 }
