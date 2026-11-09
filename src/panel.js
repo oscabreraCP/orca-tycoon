@@ -100,7 +100,7 @@ const ctx = canvas.getContext('2d')
 
 let snapshot = null
 let layout = { artW: 0, artH: 0, scale: 3, building: null, rooms: [], seats: [], common: null }
-let selected = null // seat key
+let selected = null // seat key, or a specialist's visitor key (`seat key|specialist id`)
 let tick = 0
 const lastState = new Map() // seat key -> state, to pop a bubble when it changes
 const bubbles = new Map() // seat key -> { text, until }
@@ -721,7 +721,10 @@ function stepVisitors() {
         v.path.shift()
       }
     } else if (v.mode === 'in') v.mode = 'seated'
-    else if (v.mode === 'out') visitors.delete(key)
+    else if (v.mode === 'out') {
+      visitors.delete(key)
+      if (selected === key) selected = null
+    }
   }
 }
 
@@ -1098,7 +1101,17 @@ function drawText(text, cssX, cssY, maxW, color, { weight = 600, align = 'left' 
   artTransform()
 }
 
-function drawBubble(seat, text) {
+/** Where a bubble points for this key: the person, wherever they are, or the desk. */
+function bubbleAnchor(key) {
+  const v = visitors.get(key)
+  if (v) return { x: v.x + 4, y: v.mode === 'seated' ? v.y + 2 : v.y - 1 }
+  const seat = layout.seats.find((u) => u.key === key)
+  if (!seat) return null
+  const w = walkers.get(seat.key)
+  return w ? { x: w.x + 4, y: w.y - 1 } : { x: seat.x + SEAT_W / 2, y: seat.y }
+}
+
+function drawBubble(anchor, text) {
   const s = layout.scale
   cssTransform()
   ctx.font = `500 12px ui-monospace, 'SF Mono', Menlo, monospace`
@@ -1107,10 +1120,10 @@ function drawBubble(seat, text) {
   while (label.length > 1 && ctx.measureText(label).width > maxW - 14) label = label.slice(0, -2) + '.'
   const w = Math.ceil(ctx.measureText(label).width) + 14
   const h = 20
-  const cx = (seat.x + SEAT_W / 2) * s
+  const cx = anchor.x * s
   let x = Math.round(cx - w / 2)
   x = Math.max(6, Math.min(x, layout.artW * s - w - 6))
-  const y = Math.max(4, Math.round(seat.y * s - h - 2))
+  const y = Math.max(4, Math.round(anchor.y * s - h - 2))
   ctx.fillStyle = '#e9fbef'
   ctx.strokeStyle = '#3a8f5c'
   ctx.lineWidth = 1.5
@@ -1179,11 +1192,11 @@ function draw() {
     drawText(room.name, (room.x + 5) * s, (room.y + 6.5) * s, (Math.min(room.w - 40, 56) - 4) * s, C.white, { weight: 700 })
   }
   for (const seat of layout.seats) {
-    const color = seat.key === selected ? '#2a1f6b' : '#2a2633'
+    const color = seat === seatOf(selected) ? '#2a1f6b' : '#2a2633'
     drawText(shortName(seat.desk), (seat.x + SEAT_W / 2) * s, (seat.y + SEAT_H + 2.5) * s, SEAT_W * s - 2, color, { align: 'center' })
   }
 
-  const pickSeat = layout.seats.find((u) => u.key === selected)
+  const pickSeat = selected && seatOf(selected)
   if (pickSeat) {
     artTransform()
     ctx.strokeStyle = '#ffffff'
@@ -1194,9 +1207,10 @@ function draw() {
   const now = Date.now()
   for (const seat of layout.seats) {
     const b = bubbles.get(seat.key)
-    if (seat.key === selected) drawBubble(seat, seat.staff.said ?? STATE_LABEL[seat.staff.state])
-    else if (b && b.until > now) drawBubble(seat, b.text)
+    if (seat.key !== selected && b && b.until > now) drawBubble(bubbleAnchor(seat.key), b.text)
   }
+  const anchor = selected && bubbleAnchor(selected)
+  if (anchor) drawBubble(anchor, sayingOf(selected))
 }
 
 // ---- side text ---------------------------------------------------------------------------------
@@ -1226,7 +1240,7 @@ function renderStats() {
 
 function renderDetail() {
   const box = document.getElementById('detail')
-  const seat = layout.seats.find((u) => u.key === selected)
+  const seat = selected && seatOf(selected)
   if (!seat) {
     box.hidden = true
     return
@@ -1291,10 +1305,43 @@ function onPalu(ax, ay) {
   return Boolean(dog) && overlaps(dog.box, [ax - 1, ay - 1, 2, 2])
 }
 
+/** The seat a key belongs to: its own, or the desk a specialist is visiting. */
+function seatOf(key) {
+  const seatKey = visitors.has(key) ? key.slice(0, key.lastIndexOf('|')) : key
+  return layout.seats.find((u) => u.key === seatKey) ?? null
+}
+
+/** What someone says when clicked: an agent's line, or the job a specialist was called in for. */
+function sayingOf(key) {
+  const v = visitors.get(key)
+  if (v) return v.spec.task ?? `${v.spec.role ?? 'specialist'}, on it`
+  const staff = seatOf(key)?.staff
+  return staff ? staff.line ?? staff.said ?? STATE_LABEL[staff.state] : ''
+}
+
+/** Who is under the point: a person first, wherever they are, then a desk. */
+function whoAt(ax, ay) {
+  const inBox = ([x, y, w, h]) => ax >= x && ax < x + w && ay >= y && ay < y + h
+  const people = []
+  for (const [key, v] of visitors) {
+    if (v.wait > 0) continue
+    const box = v.mode === 'seated' ? [v.x, v.y + 1, 9, 13] : [v.x - 1, v.y - 2, 10, 18]
+    people.push({ key, box, base: box[1] + box[3] })
+  }
+  for (const seat of layout.seats) {
+    const w = walkers.get(seat.key)
+    // a lounger lies across the sofa, so give the box room on both sides
+    if (w) people.push({ key: seat.key, box: [w.x - 3, w.y - 2, 14, 18], base: w.y + 16 })
+  }
+  // the one drawn last (nearest the bottom) is on top
+  const person = people.sort((a, b) => b.base - a.base).find((m) => inBox(m.box))
+  if (person) return person.key
+  return layout.seats.find((u) => inBox([u.x, u.y, SEAT_W, SEAT_H + LABEL_H]))?.key ?? null
+}
+
 canvas.addEventListener('mousemove', (event) => {
   const [ax, ay] = artPoint(event)
-  const onSeat = layout.seats.some((u) => ax >= u.x && ax < u.x + SEAT_W && ay >= u.y && ay < u.y + SEAT_H + LABEL_H)
-  canvas.style.cursor = onSeat || onPalu(ax, ay) ? 'pointer' : ''
+  canvas.style.cursor = whoAt(ax, ay) || onPalu(ax, ay) ? 'pointer' : ''
 })
 
 canvas.addEventListener('click', (event) => {
@@ -1304,8 +1351,8 @@ canvas.addEventListener('click', (event) => {
     if (!palu.path.length) paluNext()
     return
   }
-  const hit = layout.seats.find((u) => ax >= u.x && ax < u.x + SEAT_W && ay >= u.y && ay < u.y + SEAT_H + LABEL_H)
-  selected = hit && hit.key !== selected ? hit.key : null
+  const hit = whoAt(ax, ay)
+  selected = hit && hit !== selected ? hit : null
   renderDetail()
   draw()
 })

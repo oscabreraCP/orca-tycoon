@@ -69,7 +69,10 @@ A status line along the top counts teams, staff, busy agents and how many need y
 | blocked | red flashing screen with `!` |
 | done | on a break in the commons, often napping; dozing at the desk with a `z` when the commons are full |
 
-Click a seat to pin its speech bubble and see the worktree, state, task, current tool and specialists.
+Click anyone, at their desk or on a break, and they tell you in one line what they are doing:
+"I'm editing panel.js", "I'm watching CI run", "I'm waiting on the reviewer". The line comes from
+the tool and input Orca already reports, so no model is asked. A specialist tells you the job it
+was called in for. The side panel shows the worktree, state, task, current tool and specialists.
 
 ![An agent finishes with a speech bubble, walks down to the commons and takes a call in a booth, then walks back to its desk when new work arrives](docs/break.gif)
 

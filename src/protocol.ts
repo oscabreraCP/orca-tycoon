@@ -20,6 +20,8 @@ export type Staff = {
   /** First line of the agent's last reply, for its speech bubble. */
   said: string | null
   state: StaffState
+  /** What the agent says when you click it: "I'm editing panel.js", "I'm watching CI run". */
+  line: string
   since: number
   specialists: Specialist[]
 }
