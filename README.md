@@ -75,7 +75,10 @@ A status line along the top counts teams, staff, busy agents and how many need y
 Click anyone, at their desk or on a break, and they tell you in one line what they are doing:
 "I'm editing panel.js", "I'm watching CI run", "I'm waiting on the reviewer". The line comes from
 the tool and input Orca already reports, so no model is asked. A specialist tells you the job it
-was called in for. The side panel shows the worktree, state, task, current tool and specialists.
+was called in for. The side panel shows the worktree, state, task, current tool and specialists,
+and its Open in Orca button brings the agent's terminal tab to the front. A Chat UI session has no
+terminal tab, so for one the button shows its worktree instead, as clicking it in the sidebar does.
+Clicking a person or a desk never moves Orca's focus; only the button does.
 
 ![An agent finishes with a speech bubble, walks down to the commons and takes a call in a booth, then walks back to its desk when new work arrives](docs/break.gif)
 

@@ -44,9 +44,14 @@ export type OfficeSnapshot = {
   error: string | null
 }
 
+/** What came of "Open in Orca": the agent's terminal tab came up, or only its worktree could. */
+export type SwitchOutcome = { ok: true; via: 'terminal' | 'worktree' } | { ok: false; error: string }
+
 declare module 'orca' {
   interface PluginRequests {
     /** Every workspace with its agents and their subagents, grouped by project. */
     'office.snapshot': { output: OfficeSnapshot }
+    /** Brings an agent to the front in Orca: its terminal tab, or its worktree for a Chat UI session. */
+    'office.switch': { input: { paneKey: string }; output: SwitchOutcome }
   }
 }

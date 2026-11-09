@@ -55,6 +55,32 @@
       #detail .row {
         color: var(--orca-muted-foreground, #9a97a8);
       }
+      #detail .actions {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 4px 10px;
+        margin-top: 8px;
+      }
+      #detail .open {
+        padding: 3px 10px;
+        background: var(--orca-background, #15131f);
+        color: var(--orca-foreground, #e8e6f0);
+        border: 2px solid var(--orca-muted, #3a3650);
+        font: inherit;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      #detail .open:hover:enabled {
+        border-color: var(--orca-primary, #8e86ff);
+      }
+      #detail .open:disabled {
+        color: var(--orca-muted-foreground, #9a97a8);
+        cursor: default;
+      }
+      #detail .note {
+        color: var(--orca-muted-foreground, #9a97a8);
+      }
       .empty,
       .error {
         color: var(--orca-muted-foreground, #9a97a8);
