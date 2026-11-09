@@ -210,8 +210,8 @@ function planRoom(floor, innerW) {
 }
 
 /**
- * The office at one scale. `corridor` is the floor between rooms stacked above one another;
- * fitLayout widens it to fill the panel.
+ * The office at one scale. `corridor` is the floor between a room and whatever lies above or
+ * below it, another room or the commons band; fitLayout widens it to fill the panel.
  */
 function computeLayout(cssW, scale, corridor = GAP) {
   const artW = Math.floor(cssW / scale)
@@ -356,8 +356,11 @@ function computeLayout(cssW, scale, corridor = GAP) {
  * integer pixel ratio, so the art stays crisp.
  */
 function fitLayout() {
-  const cssW = Math.max(180, office.clientWidth)
-  const cssH = office.clientHeight
+  // The box's exact size, floored: clientWidth and clientHeight round, and a canvas half a pixel
+  // taller than the box would summon a scrollbar.
+  const box = office.getBoundingClientRect()
+  const cssW = Math.max(180, Math.floor(box.width))
+  const cssH = Math.floor(box.height)
   const perPx = Number.isInteger(dpr()) ? dpr() : 1 // scale steps per CSS pixel
   const minScale = cssW >= 300 ? 3 : 2
   // The building at this scale, stretched to the panel's bottom; null when it is too tall as it is.
@@ -385,13 +388,14 @@ function resize() {
   layout = fitLayout()
   const w = Math.round(layout.artW * layout.scale * dpr())
   const h = Math.round(layout.artH * layout.scale * dpr())
-  // Only touch the size when it changes: assigning it clears the canvas.
+  // Only touch the backing size when it changes: assigning it clears the canvas. The CSS size
+  // comes from the device size, so it is exact at any pixel ratio.
   if (canvas.width !== w || canvas.height !== h) {
     canvas.width = w
     canvas.height = h
-    canvas.style.width = `${layout.artW * layout.scale}px`
-    canvas.style.height = `${layout.artH * layout.scale}px`
   }
+  canvas.style.width = `${w / dpr()}px`
+  canvas.style.height = `${h / dpr()}px`
   draw()
 }
 
