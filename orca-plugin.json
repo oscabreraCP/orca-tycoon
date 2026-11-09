@@ -2,7 +2,7 @@
   "manifestVersion": 2,
   "id": "office-tycoon",
   "name": "Orca Tycoon",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Every agent on your Orca host as a little pixel worker in a tycoon-style office.",
   "author": {
     "name": "Palu Labs",

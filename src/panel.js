@@ -1163,27 +1163,33 @@ function draw() {
     if (v.mode === 'seated') specialist(painter(ctx, Math.round(v.x) + 1, Math.round(v.y) + 2), v.spec, tick)
   }
 
-  // people up and about, nearest the bottom drawn last
-  const walking = layout.seats.filter((seat) => walkers.has(seat.key) && !behind.has(seat.key))
-  walking.sort((a, b) => walkers.get(a.key).y - walkers.get(b.key).y)
-  for (const seat of walking) {
+  // people up and about, Palú and specialists on their way, nearest the bottom drawn last, so
+  // whoever stands in front covers whoever is behind. Callers in a booth go first, under its glass.
+  const scene = []
+  for (const seat of layout.seats) {
     const w = walkers.get(seat.key)
+    if (!w || behind.has(seat.key)) continue
     const at = painter(ctx, Math.round(w.x), Math.round(w.y))
     const kind = w.mode === 'away' ? w.activity?.kind : null
-    if (kind === 'lounge') lounger(at, seat.staff, tick, w.activity.pose)
-    else if (kind === 'booth') walker(at, seat.staff, tick, false, w.left, null, 'phone')
-    else if (kind === 'foosball') walker(at, seat.staff, tick, false, w.left, null, w.spot.back ? 'playBack' : 'play')
-    else walker(at, seat.staff, tick, w.path.length > 0, w.left)
+    let paint
+    if (kind === 'lounge') paint = () => lounger(at, seat.staff, tick, w.activity.pose)
+    else if (kind === 'booth') paint = () => walker(at, seat.staff, tick, false, w.left, null, 'phone')
+    else if (kind === 'foosball') paint = () => walker(at, seat.staff, tick, false, w.left, null, w.spot.back ? 'playBack' : 'play')
+    else paint = () => walker(at, seat.staff, tick, w.path.length > 0, w.left)
+    scene.push({ base: Math.round(w.y) + 15, inBooth: kind === 'booth', paint })
   }
+  for (const [key, v] of visitors) {
+    if (v.mode === 'seated' || v.wait > 0 || behind.has(key)) continue
+    const at = painter(ctx, Math.round(v.x), Math.round(v.y))
+    scene.push({ base: Math.round(v.y) + 15, paint: () => walker(at, v.spec, tick, true, v.left, roleColor(v.spec.role)) })
+  }
+  const dog = behind.has('palu') ? null : paluBox()
+  // on a tie Palú goes first: he is low to the ground, so the person's legs cover him
+  if (dog) scene.push({ base: dog.base - 0.5, paint: drawPalu })
+  scene.sort((a, b) => a.base - b.base)
+  for (const it of scene) if (it.inBooth) it.paint()
   if (layout.common) for (const b of layout.common.booths) boothGlass(painter(ctx, b.bx, b.by))
-  if (!behind.has('palu')) drawPalu()
-  const moving = [...visitors]
-    .filter(([key, v]) => v.mode !== 'seated' && !(v.wait > 0) && !behind.has(key))
-    .map(([, v]) => v)
-    .sort((a, b) => a.y - b.y)
-  for (const v of moving) {
-    walker(painter(ctx, Math.round(v.x), Math.round(v.y)), v.spec, tick, true, v.left, roleColor(v.spec.role))
-  }
+  for (const it of scene) if (!it.inBooth) it.paint()
 
   const s = layout.scale
   for (const room of layout.rooms) {
