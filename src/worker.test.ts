@@ -1,6 +1,6 @@
 // Runs the mapping from `orca worktree ps --json` rows to the office model.
 import { assert, test } from 'orca/testing'
-import { toSnapshot } from './worker'
+import { labelOf, toSnapshot } from './worker'
 
 test('groups agents by project and keeps subagents as specialists', () => {
   const raw = {
@@ -110,4 +110,49 @@ test('agents say one short line about what they are doing', () => {
   assert.equal(say({ state: 'waiting', toolName: 'AskUserQuestion' }), 'I have a question for you')
   assert.equal(say({ state: 'blocked' }), "I'm stuck, can you help?")
   assert.equal(say({ state: 'done', lastAssistantMessage: 'Merged #12.\nMore below' }), 'Merged #12.')
+})
+
+test('a seat is labelled by ticket, issue number, first word of the title, then the workspace', () => {
+  // a ticket key in the conversation name wins, then one in the workspace name
+  assert.equal(labelOf('IT-73625 Mail routing broke', 'main'), 'IT-73625')
+  assert.equal(labelOf('Checkout redesign', 'WEB-142 Checkout redesign'), 'WEB-142')
+  assert.equal(labelOf('Fix cart totals', 'tommy/web-151-fix-cart-totals'), 'Fix')
+  // an issue number is next, from either name
+  assert.equal(labelOf('Issue #19977: flaky build', 'main'), '#19977')
+  assert.equal(labelOf('Flaky build', 'issue-#19977'), '#19977')
+  // then the first word of the conversation title, past leading symbols and trailing punctuation
+  assert.equal(labelOf('Assistant name question', 'main'), 'Assistant')
+  assert.equal(labelOf('  [WIP] Desk labels: ticket key', 'main'), 'WIP')
+  assert.equal(labelOf('- fix: cart totals', 'main'), 'fix')
+  assert.equal(labelOf('"Palu" gets bowls', 'main'), 'Palu')
+  assert.equal(labelOf('feat/labels', 'main'), 'feat')
+  // else what the nameplate showed before: the first word of the workspace name
+  assert.equal(labelOf(null, 'main'), 'main')
+  assert.equal(labelOf('', 'feature/login form'), 'feature')
+  assert.equal(labelOf('***', 'main'), 'main')
+  // never empty
+  assert.equal(labelOf('...', '---'), '---')
+  assert.equal(labelOf(null, ''), 'workspace')
+})
+
+test('staff carry their nameplate label', () => {
+  const raw = {
+    result: {
+      worktrees: [
+        {
+          worktreeId: 'w1',
+          repo: 'infra',
+          branch: 'refs/heads/main',
+          displayName: 'main',
+          agents: [
+            { paneKey: 'p1', state: 'working', conversationName: 'SRE-213 Rotate the backup key' },
+            { paneKey: 'p2', state: 'working', conversationName: 'Assistant name question' },
+            { paneKey: 'p3', state: 'idle' }
+          ]
+        }
+      ]
+    }
+  }
+  const staff = toSnapshot(raw, 1).floors[0].desks[0].staff
+  assert.deepEqual(staff.map((s) => s.label), ['SRE-213', 'Assistant', 'main'])
 })

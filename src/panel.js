@@ -120,11 +120,9 @@ function since(ms) {
   return `${Math.round(m / 60)}h`
 }
 
-/** The short name on a seat's nameplate: the ticket key when there is one. */
-function shortName(desk) {
-  const key = desk.name.match(/[A-Z]{2,6}-\d+/)
-  if (key) return key[0]
-  return desk.name.split(/[\s/]+/)[0]
+/** What a seat's nameplate reads: the worker picks it from the conversation and workspace names. */
+function nameplate(seat) {
+  return seat.staff.label || seat.desk.name.split(/[\s/]+/)[0] || 'workspace'
 }
 
 // ---- layout ----------------------------------------------------------------------------------
@@ -1193,7 +1191,8 @@ function draw() {
   }
   for (const seat of layout.seats) {
     const color = seat === seatOf(selected) ? '#2a1f6b' : '#2a2633'
-    drawText(shortName(seat.desk), (seat.x + SEAT_W / 2) * s, (seat.y + SEAT_H + 2.5) * s, SEAT_W * s - 2, color, { align: 'center' })
+    // as wide as the desk itself (DESK_W), less a margin, so neighbouring nameplates never touch
+    drawText(nameplate(seat), (seat.x + SEAT_W / 2) * s, (seat.y + SEAT_H + 2.5) * s, DESK_W * s - 2, color, { align: 'center' })
   }
 
   const pickSeat = selected && seatOf(selected)

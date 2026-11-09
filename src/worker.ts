@@ -185,12 +185,38 @@ export function lineOf(row: Row, state: StaffState, specialists: Specialist[]): 
   return tool ? toolLine(tool, str(row.toolInput)) : "I'm thinking"
 }
 
-function toStaff(row: Row): Staff {
+// ---- the nameplate on a desk --------------------------------------------------------------------
+// Several desks on one branch all used to read `main`. The conversation name tells them apart:
+// its ticket key, else an issue number, else its first word, else the workspace name as before.
+
+const TICKET_KEY = /\b[A-Z]{2,6}-\d+\b/
+const ISSUE_NUMBER = /#(\d+)\b/
+const LEADING_SYMBOLS = /^[^\p{L}\p{N}]+/u
+const TRAILING_SYMBOLS = /[^\p{L}\p{N}]+$/u
+
+/** The first word of a title, without the symbols around it; empty when there is none. */
+function firstWord(title: string): string {
+  const word = title.replace(LEADING_SYMBOLS, '').split(/[\s/]+/)[0] ?? ''
+  return word.replace(TRAILING_SYMBOLS, '')
+}
+
+/** What the nameplate reads for an agent whose conversation is `name`, at the desk `deskName`. */
+export function labelOf(name: string | null, deskName: string): string {
+  const title = name ?? ''
+  const ticket = title.match(TICKET_KEY) ?? deskName.match(TICKET_KEY)
+  if (ticket) return ticket[0]
+  const issue = title.match(ISSUE_NUMBER) ?? deskName.match(ISSUE_NUMBER)
+  if (issue) return `#${issue[1]}`
+  return firstWord(title) || firstWord(deskName) || deskName.trim() || 'workspace'
+}
+
+function toStaff(row: Row, deskName: string): Staff {
   const specialists = specialistsOf(row)
   return {
     id: String(row.paneKey ?? ''),
     agent: str(row.agentType),
     name: str(row.conversationName) ?? str(row.displayName) ?? str(row.taskTitle),
+    label: labelOf(str(row.conversationName), deskName),
     task: str(row.taskTitle) ?? str(row.prompt)?.slice(0, 140) ?? null,
     tool: str(row.toolName),
     said: str(row.lastAssistantMessage)?.split('\n')[0]?.slice(0, 120) ?? null,
@@ -211,12 +237,13 @@ export function toSnapshot(raw: unknown, at: number): OfficeSnapshot {
     if (agents.length === 0) continue
     const repo = str(w.repo) ?? 'Other'
     const branch = str(w.branch)?.replace(/^refs\/heads\//, '') ?? null
+    const name = str(w.displayName) ?? branch ?? 'workspace'
     const desk: Desk = {
       id: String(w.worktreeId ?? ''),
-      name: str(w.displayName) ?? branch ?? 'workspace',
+      name,
       branch,
       parentId: str(w.parentWorktreeId),
-      staff: agents.map(toStaff)
+      staff: agents.map((row) => toStaff(row, name))
     }
     const list = floors.get(repo) ?? []
     list.push(desk)

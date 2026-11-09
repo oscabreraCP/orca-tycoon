@@ -31,7 +31,10 @@ The worker looks for the Orca CLI at `/Applications/Orca.app/Contents/Resources/
 - **Projects are teams.** Each repository gets its own open area on the office floor. A big
   team spreads across the full width; small ones share the floor in two columns.
 - **Agents get desks.** Every agent has a seat with a monitor facing you. A worktree's child
-  worktrees sit right next to it, so a stack of branches reads as one row of desks.
+  worktrees sit right next to it, so a stack of branches reads as one row of desks. The nameplate
+  under a desk is the ticket key or issue number in the agent's conversation or workspace name,
+  else the first word of the conversation title, else the workspace name, so four desks on `main`
+  still tell apart.
 - **Subagents are specialists.** Every desk has a stool at its end, the second seat. When an
   agent calls in a subagent, a specialist walks in through the front door in the side wall, sits on that stool
   leaning in toward the screen, and leaves the same way when the job is done. A desk grows up to
