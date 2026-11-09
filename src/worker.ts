@@ -4,7 +4,7 @@
 import type { OrcaWorkerApi } from 'orca/worker'
 import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import type { Desk, Floor, OfficeSnapshot, Specialist, Staff, StaffState } from './protocol'
+import type { Desk, Floor, OfficeSnapshot, Specialist, Staff, StaffState, SwitchOutcome } from './protocol'
 
 const CLI_CANDIDATES = [
   '/Applications/Orca.app/Contents/Resources/bin/orca',
@@ -16,23 +16,28 @@ function cliPath(): string {
   return CLI_CANDIDATES.find((p) => existsSync(p)) ?? 'orca'
 }
 
-function runPs(): Promise<unknown> {
+/** Runs the CLI with an argument array (never a shell) and parses its JSON answer. */
+function runCli(args: string[]): Promise<unknown> {
   return new Promise((resolve, reject) => {
-    execFile(
-      cliPath(),
-      ['worktree', 'ps', '--json'],
-      { timeout: CLI_TIMEOUT_MS, maxBuffer: 32 * 1024 * 1024 },
-      (error, stdout) => {
-        if (error && !stdout) return reject(error)
-        try {
-          resolve(JSON.parse(stdout))
-        } catch (parseError) {
-          reject(parseError)
-        }
+    execFile(cliPath(), args, { timeout: CLI_TIMEOUT_MS, maxBuffer: 32 * 1024 * 1024 }, (error, stdout) => {
+      if (error && !stdout) return reject(error)
+      let parsed: unknown
+      try {
+        parsed = JSON.parse(stdout)
+      } catch (parseError) {
+        return reject(error ?? parseError)
       }
-    )
+      // `--json` answers carry ok and, when refused, error.code / error.message
+      const answer = parsed as { ok?: unknown; error?: { message?: unknown; code?: unknown } } | null
+      if (answer?.ok === false) {
+        return reject(new Error(str(answer.error?.message) ?? str(answer.error?.code) ?? 'the Orca CLI refused'))
+      }
+      resolve(parsed)
+    })
   })
 }
+
+const runPs = (): Promise<unknown> => runCli(['worktree', 'ps', '--json'])
 
 type Row = Record<string, unknown>
 const str = (v: unknown): string | null => (typeof v === 'string' && v.trim() ? v.trim() : null)
@@ -255,6 +260,64 @@ export function toSnapshot(raw: unknown, at: number): OfficeSnapshot {
   return { at, floors: out, error: null }
 }
 
+// ---- Open in Orca -------------------------------------------------------------------------------
+// The panel has no CLI, so it asks the worker to bring an agent to the front. A terminal agent's
+// pane key is `${tabId}:${leafId}` of a row in `orca terminal list --json`, whose handle
+// `orca terminal switch` takes. A Chat UI session is not a terminal: its pane key starts with
+// `structured-agent-session-` and no CLI command focuses its tab, so the worker shows its
+// worktree instead with `orca worktree activate`, as clicking it in the sidebar does. Nothing the
+// panel sends reaches the CLI: the pane key only picks a handle or a worktree id from Orca's own
+// answers.
+
+const CHAT_SESSION_PREFIX = 'structured-agent-session-'
+
+export const isChatSession = (paneKey: string): boolean => paneKey.startsWith(CHAT_SESSION_PREFIX)
+
+/** `orca terminal switch` for the terminal whose pane key this is, from `orca terminal list --json`. */
+export function terminalSwitchArgs(paneKey: string, raw: unknown): string[] | null {
+  const terminals = (raw as { result?: { terminals?: Row[] } } | null)?.result?.terminals
+  if (!Array.isArray(terminals)) return null
+  const match = terminals.find((t) => `${String(t.tabId ?? '')}:${String(t.leafId ?? '')}` === paneKey)
+  const handle = str(match?.handle)
+  return handle ? ['terminal', 'switch', '--terminal', handle] : null
+}
+
+/** `orca worktree activate` for the worktree the agent with this pane key sits in, from `worktree ps`. */
+export function worktreeActivateArgs(paneKey: string, raw: unknown): string[] | null {
+  const worktrees = (raw as { result?: { worktrees?: Row[] } } | null)?.result?.worktrees
+  if (!Array.isArray(worktrees)) return null
+  for (const w of worktrees) {
+    const agents = Array.isArray(w.agents) ? (w.agents as Row[]) : []
+    if (!agents.some((a) => a.paneKey === paneKey)) continue
+    const id = str(w.worktreeId)
+    return id ? ['worktree', 'activate', '--worktree', `id:${id}`] : null
+  }
+  return null
+}
+
+const PANE_KEY_MAX = 512
+
+/** Answers 'office.switch'. `run` is the CLI: an argument array in, its parsed JSON out. */
+export async function switchTo(input: unknown, run: (args: string[]) => Promise<unknown>): Promise<SwitchOutcome> {
+  const paneKey = str((input as { paneKey?: unknown } | null)?.paneKey)
+  if (!paneKey || paneKey.length > PANE_KEY_MAX) return { ok: false, error: 'no pane key' }
+  try {
+    if (!isChatSession(paneKey)) {
+      const terminal = terminalSwitchArgs(paneKey, await run(['terminal', 'list', '--json']))
+      if (terminal) {
+        await run([...terminal, '--json'])
+        return { ok: true, via: 'terminal' }
+      }
+    }
+    const worktree = worktreeActivateArgs(paneKey, await run(['worktree', 'ps', '--json']))
+    if (!worktree) return { ok: false, error: 'this agent is no longer in Orca' }
+    await run([...worktree, '--json'])
+    return { ok: true, via: 'worktree' }
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) }
+  }
+}
+
 export default function activate(orca: OrcaWorkerApi): void {
   let last: OfficeSnapshot = { at: 0, floors: [], error: null }
   orca.panels.handle('office.snapshot', async () => {
@@ -266,5 +329,10 @@ export default function activate(orca: OrcaWorkerApi): void {
       last = { ...last, error: message }
     }
     return last
+  })
+  orca.panels.handle('office.switch', async (input) => {
+    const outcome = await switchTo(input, runCli)
+    if (!outcome.ok) orca.log(`open in Orca failed: ${outcome.error}`)
+    return outcome
   })
 }

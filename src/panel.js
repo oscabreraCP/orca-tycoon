@@ -1237,6 +1237,25 @@ function renderStats() {
   document.getElementById('stats').textContent = parts.join(' · ')
 }
 
+// How the last "Open in Orca" went for the selected seat: 'opening', or the reason it failed.
+// Kept across polls (renderDetail runs on each) and dropped when the selection changes.
+let opening = null
+
+/** Asks the worker to bring the agent's tab to the front; the panel itself never moves Orca's focus. */
+async function openInOrca(seat) {
+  opening = { key: seat.key, text: null, busy: true }
+  renderDetail()
+  let outcome
+  try {
+    outcome = await orca.plugin.request('office.switch', { paneKey: seat.staff.id }, { timeoutMs: 20000 })
+  } catch (error) {
+    outcome = { ok: false, error: error?.message ?? String(error) }
+  }
+  if (opening?.key !== seat.key) return
+  opening = outcome.ok ? null : { key: seat.key, text: `Could not open it in Orca: ${outcome.error}`, busy: false }
+  renderDetail()
+}
+
 function renderDetail() {
   const box = document.getElementById('detail')
   const seat = selected && seatOf(selected)
@@ -1251,6 +1270,17 @@ function renderDetail() {
   if (staff.tool && staff.state === 'working') lines.push(el('div', 'row', `using ${staff.tool}`))
   for (const sp of activeSpecialists(staff)) {
     lines.push(el('div', 'row', `${sp.role ?? 'specialist'}: ${sp.task ?? ''} (${STATE_LABEL[sp.state]})`))
+  }
+  if (staff.id) {
+    const state = opening?.key === seat.key ? opening : null
+    const button = el('button', 'open', state?.busy ? 'Opening...' : 'Open in Orca')
+    button.type = 'button'
+    button.disabled = Boolean(state?.busy)
+    button.addEventListener('click', () => openInOrca(seat))
+    const actions = el('div', 'actions')
+    actions.append(button)
+    if (state?.text) actions.append(el('span', 'note', state.text))
+    lines.push(actions)
   }
   box.replaceChildren(...lines)
   box.hidden = false
@@ -1352,6 +1382,7 @@ canvas.addEventListener('click', (event) => {
   }
   const hit = whoAt(ax, ay)
   selected = hit && hit !== selected ? hit : null
+  if (opening && seatOf(selected)?.key !== opening.key) opening = null
   renderDetail()
   draw()
 })
