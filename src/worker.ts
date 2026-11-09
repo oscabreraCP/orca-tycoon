@@ -191,8 +191,9 @@ export function lineOf(row: Row, state: StaffState, specialists: Specialist[]): 
 }
 
 // ---- the nameplate on a desk --------------------------------------------------------------------
-// Several desks on one branch all used to read `main`. The conversation name tells them apart:
-// its ticket key, else an issue number, else its first word, else the workspace name as before.
+// A ticket key or issue number wins wherever it appears. Otherwise a workspace with a name of its
+// own keeps it, and only a generic one (the main checkout, `main`, or a name several desks in the
+// project share) borrows the first word of the agent's conversation title instead.
 
 const TICKET_KEY = /\b[A-Z]{2,6}-\d+\b/
 const ISSUE_NUMBER = /#(\d+)\b/
@@ -205,23 +206,40 @@ function firstWord(title: string): string {
   return word.replace(TRAILING_SYMBOLS, '')
 }
 
-/** What the nameplate reads for an agent whose conversation is `name`, at the desk `deskName`. */
-export function labelOf(name: string | null, deskName: string): string {
+const DEFAULT_BRANCHES = new Set(['main', 'master', 'develop', 'dev', 'trunk'])
+
+/** True when a workspace name says nothing about the work: a default branch name. */
+export function isGenericName(deskName: string, defaultBranch: string | null = null): boolean {
+  const name = deskName.trim().toLowerCase()
+  return DEFAULT_BRANCHES.has(name) || (defaultBranch !== null && name === defaultBranch.toLowerCase())
+}
+
+/** A workspace's own short name: its first word, and for a branch path its last segment. */
+function ownName(deskName: string): string {
+  return deskName.trim().split(/\s+/)[0].split('/').filter(Boolean).pop() ?? ''
+}
+
+/**
+ * What the nameplate reads for an agent whose conversation is `name`, at the desk `deskName`.
+ * `generic` says the desk's own name tells it apart from nothing, so the title gets a turn.
+ */
+export function labelOf(name: string | null, deskName: string, generic = isGenericName(deskName)): string {
   const title = name ?? ''
   const ticket = title.match(TICKET_KEY) ?? deskName.match(TICKET_KEY)
   if (ticket) return ticket[0]
   const issue = title.match(ISSUE_NUMBER) ?? deskName.match(ISSUE_NUMBER)
   if (issue) return `#${issue[1]}`
-  return firstWord(title) || firstWord(deskName) || deskName.trim() || 'workspace'
+  if (!generic) return ownName(deskName) || firstWord(title) || 'workspace'
+  return firstWord(title) || ownName(deskName) || 'workspace'
 }
 
-function toStaff(row: Row, deskName: string): Staff {
+function toStaff(row: Row, deskName: string, generic: boolean): Staff {
   const specialists = specialistsOf(row)
   return {
     id: String(row.paneKey ?? ''),
     agent: str(row.agentType),
     name: str(row.conversationName) ?? str(row.displayName) ?? str(row.taskTitle),
-    label: labelOf(str(row.conversationName), deskName),
+    label: labelOf(str(row.conversationName), deskName, generic),
     task: str(row.taskTitle) ?? str(row.prompt)?.slice(0, 140) ?? null,
     tool: str(row.toolName),
     said: str(row.lastAssistantMessage)?.split('\n')[0]?.slice(0, 120) ?? null,
@@ -235,20 +253,32 @@ function toStaff(row: Row, deskName: string): Staff {
 export function toSnapshot(raw: unknown, at: number): OfficeSnapshot {
   const result = (raw as { result?: { worktrees?: Row[] } })?.result
   const worktrees = Array.isArray(result?.worktrees) ? result.worktrees : []
+  const live = worktrees.filter((w) => w.isArchived !== true && Array.isArray(w.agents) && w.agents.length > 0)
+  const repoOf = (w: Row) => str(w.repo) ?? 'Other'
+  const nameOf = (w: Row) => str(w.displayName) ?? str(w.branch)?.replace(/^refs\/heads\//, '') ?? 'workspace'
+  // names several desks in one project share tell those desks apart from nothing
+  const seen = new Map<string, number>()
+  for (const w of live) {
+    const key = `${repoOf(w)}\n${nameOf(w).toLowerCase()}`
+    seen.set(key, (seen.get(key) ?? 0) + 1)
+  }
   const floors = new Map<string, Desk[]>()
-  for (const w of worktrees) {
-    if (w.isArchived === true) continue
-    const agents = Array.isArray(w.agents) ? (w.agents as Row[]) : []
-    if (agents.length === 0) continue
-    const repo = str(w.repo) ?? 'Other'
+  for (const w of live) {
+    const agents = w.agents as Row[]
+    const repo = repoOf(w)
     const branch = str(w.branch)?.replace(/^refs\/heads\//, '') ?? null
-    const name = str(w.displayName) ?? branch ?? 'workspace'
+    const name = nameOf(w)
+    const defaultBranch = str(w.defaultBranch)?.replace(/^(?:refs\/heads\/|origin\/)/, '') ?? null
+    const generic =
+      w.isMainWorktree === true ||
+      isGenericName(name, defaultBranch) ||
+      (seen.get(`${repo}\n${name.toLowerCase()}`) ?? 0) > 1
     const desk: Desk = {
       id: String(w.worktreeId ?? ''),
       name,
       branch,
       parentId: str(w.parentWorktreeId),
-      staff: agents.map((row) => toStaff(row, name))
+      staff: agents.map((row) => toStaff(row, name, generic))
     }
     const list = floors.get(repo) ?? []
     list.push(desk)

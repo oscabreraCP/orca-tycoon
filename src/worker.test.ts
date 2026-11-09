@@ -113,23 +113,28 @@ test('agents say one short line about what they are doing', () => {
   assert.equal(say({ state: 'done', lastAssistantMessage: 'Merged #12.\nMore below' }), 'Merged #12.')
 })
 
-test('a seat is labelled by ticket, issue number, first word of the title, then the workspace', () => {
+test('a seat is labelled by ticket, issue number, its own name, or the title when its name is generic', () => {
   // a ticket key in the conversation name wins, then one in the workspace name
   assert.equal(labelOf('IT-73625 Mail routing broke', 'main'), 'IT-73625')
   assert.equal(labelOf('Checkout redesign', 'WEB-142 Checkout redesign'), 'WEB-142')
-  assert.equal(labelOf('Fix cart totals', 'tommy/web-151-fix-cart-totals'), 'Fix')
+  // a workspace with a name of its own keeps it (the last segment of a branch path)
+  assert.equal(labelOf('Fix cart totals', 'tommy/web-151-fix-cart-totals'), 'web-151-fix-cart-totals')
+  assert.equal(labelOf('Platform input map M1 cockpit', 'cockpit-input-map-m1'), 'cockpit-input-map-m1')
   // an issue number is next, from either name
   assert.equal(labelOf('Issue #19977: flaky build', 'main'), '#19977')
   assert.equal(labelOf('Flaky build', 'issue-#19977'), '#19977')
-  // then the first word of the conversation title, past leading symbols and trailing punctuation
+  // a generic name gives the title's first word a turn, past leading symbols and trailing punctuation
   assert.equal(labelOf('Assistant name question', 'main'), 'Assistant')
   assert.equal(labelOf('  [WIP] Desk labels: ticket key', 'main'), 'WIP')
   assert.equal(labelOf('- fix: cart totals', 'main'), 'fix')
   assert.equal(labelOf('"Palu" gets bowls', 'main'), 'Palu')
   assert.equal(labelOf('feat/labels', 'main'), 'feat')
-  // else what the nameplate showed before: the first word of the workspace name
+  // else the workspace's own name
   assert.equal(labelOf(null, 'main'), 'main')
-  assert.equal(labelOf('', 'feature/login form'), 'feature')
+  assert.equal(labelOf('', 'feature/login form'), 'login')
+  // the caller can mark any name generic, for a main checkout or a name desks share
+  assert.equal(labelOf('Release notes', 'acme-web', true), 'Release')
+  assert.equal(labelOf('Release notes', 'acme-web', false), 'acme-web')
   assert.equal(labelOf('***', 'main'), 'main')
   // never empty
   assert.equal(labelOf('...', '---'), '---')
@@ -256,4 +261,29 @@ test('switchTo refuses anything but a pane key without touching the CLI', async 
     assert.equal(out.ok, false, `accepted ${JSON.stringify(bad)}`)
   }
   assert.deepEqual(calls, [])
+})
+
+test('only generic workspace names borrow the conversation title', () => {
+  const wt = (worktreeId: string, displayName: string, extra: Record<string, unknown> = {}) => ({
+    worktreeId,
+    repo: 'acme-web',
+    displayName,
+    defaultBranch: 'refs/heads/trunk',
+    ...extra,
+    agents: [{ paneKey: `p-${worktreeId}`, state: 'working', conversationName: `Title of ${worktreeId}` }]
+  })
+  const raw = {
+    result: {
+      worktrees: [
+        wt('a', 'checkout-redesign'),
+        wt('b', 'trunk'),
+        wt('c', 'acme-web', { isMainWorktree: true }),
+        wt('d', 'spike'),
+        wt('e', 'Spike')
+      ]
+    }
+  }
+  const labels = toSnapshot(raw, 1).floors[0].desks.map((d) => d.staff[0].label)
+  // own name kept; the repo's default branch, the main checkout and a shared name take the title
+  assert.deepEqual(labels, ['checkout-redesign', 'Title', 'Title', 'Title', 'Title'])
 })

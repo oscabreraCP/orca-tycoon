@@ -33,7 +33,8 @@ The worker looks for the Orca CLI at `/Applications/Orca.app/Contents/Resources/
 - **Agents get desks.** Every agent has a seat with a monitor facing you. A worktree's child
   worktrees sit right next to it, so a stack of branches reads as one row of desks. The nameplate
   under a desk is the ticket key or issue number in the agent's conversation or workspace name,
-  else the first word of the conversation title, else the workspace name, so four desks on `main`
+  else the workspace name. Only when that name is generic, like `main` or a name several desks
+  share, does the first word of the conversation title take its place, so four desks on `main`
   still tell apart.
 - **Subagents are specialists.** Every desk has a stool at its end, the second seat. When an
   agent calls in a subagent, a specialist walks in through the front door in the side wall, sits on that stool
