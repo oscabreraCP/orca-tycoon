@@ -65,6 +65,12 @@ const TABLE_GAP = 6
 const MIN_ROOM_W = (DESK_W + STOOL_W + 1) * 2 + PAD * 2 + GLASS * 2
 const COMMON_H = 34
 const WALK_SPEED = 1.5 // art pixels per frame
+// Pixel scale, CSS pixels per art pixel. The office grows to the biggest scale at which the whole
+// building still fits the panel, so it fills a tall or wide panel instead of stopping at its own
+// height; it never drops below the width's minimum, so a crowded office scrolls as before.
+const MAX_SCALE = 8
+const MIN_ART_W = MIN_ROOM_W + (OUTER + MARGIN) * 2 // narrower than this and not even the smallest room fits
+const MAX_CORRIDOR = GAP * 4 // the corridors between rooms widen to reach the panel's bottom, up to this
 // States in which an agent leaves its desk for the coffee corner until the state ends.
 // 'monitoring' is a finished turn waiting on background tasks; add 'waiting' to also send
 // agents that wait for you.
@@ -95,8 +101,10 @@ const STATE_NOTE = {
   idle: '#9aa0b4'
 }
 
+const office = document.getElementById('office')
 const canvas = document.getElementById('plan')
 const ctx = canvas.getContext('2d')
+const dpr = () => window.devicePixelRatio || 1
 
 let snapshot = null
 let layout = { artW: 0, artH: 0, scale: 3, building: null, rooms: [], seats: [], common: null }
@@ -201,9 +209,11 @@ function planRoom(floor, innerW) {
   return { lines, tableW }
 }
 
-function computeLayout() {
-  const cssW = Math.max(180, document.getElementById('office').clientWidth)
-  const scale = cssW >= 300 ? 3 : 2
+/**
+ * The office at one scale. `corridor` is the floor between a room and whatever lies above or
+ * below it, another room or the commons band; fitLayout widens it to fill the panel.
+ */
+function computeLayout(cssW, scale, corridor = GAP) {
   const artW = Math.floor(cssW / scale)
   const floorW = artW - OUTER * 2 - MARGIN * 2
   const cols = Math.max(1, Math.floor((floorW + GAP) / (MIN_ROOM_W + GAP)))
@@ -229,12 +239,12 @@ function computeLayout() {
     const placed = list.map((plan) => {
       if (plan.wide) {
         const y = Math.max(...colY)
-        colY.fill(y + plan.h + GAP)
+        colY.fill(y + plan.h + corridor)
         return { plan, x: OUTER + MARGIN, y }
       }
       const col = colY.indexOf(Math.min(...colY))
       const at = { plan, x: OUTER + MARGIN + col * (roomW + GAP), y: colY[col] }
-      colY[col] += plan.h + GAP
+      colY[col] += plan.h + corridor
       return at
     })
     return { placed, bottom: Math.max(...colY) }
@@ -310,7 +320,7 @@ function computeLayout() {
     common.bowls = { x: common.lounge.x + 3, y: common.lounge.y + 19 }
   }
 
-  const bottom = pack(plans.slice(split), bandY + bandH + GAP)
+  const bottom = pack(plans.slice(split), bandY + bandH + corridor)
   const rooms = []
   const seats = []
   for (const { plan, x, y: ry } of [...top.placed, ...bottom.placed]) {
@@ -334,36 +344,71 @@ function computeLayout() {
     })
     rooms.push(room)
   }
-  const y = Math.max(bottom.bottom, bandY + bandH + GAP) - GAP + MARGIN
+  const y = Math.max(bottom.bottom, bandY + bandH + corridor) - corridor + MARGIN
   const building = { w: artW, h: y + OUTER, doorY }
   return { artW, artH: building.h, scale, building, rooms, seats, common }
 }
 
+/**
+ * Lays the office out at the biggest scale that fits the panel, then stretches the building to the
+ * panel's bottom edge: first by widening the corridors between rooms, then with floor above the
+ * bottom wall. Scales step by whole CSS pixels, or by whole device pixels on a display with an
+ * integer pixel ratio, so the art stays crisp.
+ */
+function fitLayout() {
+  // The box's exact size, floored: clientWidth and clientHeight round, and a canvas half a pixel
+  // taller than the box would summon a scrollbar.
+  const box = office.getBoundingClientRect()
+  const cssW = Math.max(180, Math.floor(box.width))
+  const cssH = Math.floor(box.height)
+  const perPx = Number.isInteger(dpr()) ? dpr() : 1 // scale steps per CSS pixel
+  const minScale = cssW >= 300 ? 3 : 2
+  // The building at this scale, stretched to the panel's bottom; null when it is too tall as it is.
+  const fill = (scale) => {
+    const rows = Math.floor(cssH / scale)
+    let fit = null
+    for (let corridor = GAP; corridor <= MAX_CORRIDOR; corridor++) {
+      const wider = computeLayout(cssW, scale, corridor)
+      if (wider.artH > rows) break
+      fit = wider
+    }
+    if (fit) fit.artH = fit.building.h = rows
+    return fit
+  }
+  for (let n = MAX_SCALE * perPx; n / perPx > minScale; n--) {
+    const scale = n / perPx
+    if (Math.floor(cssW / scale) < MIN_ART_W) continue
+    const filled = fill(scale)
+    if (filled) return filled
+  }
+  return fill(minScale) ?? computeLayout(cssW, minScale)
+}
+
 function resize() {
-  layout = computeLayout()
-  const dpr = window.devicePixelRatio || 1
-  const w = Math.round(layout.artW * layout.scale * dpr)
-  const h = Math.round(layout.artH * layout.scale * dpr)
-  // Only touch the size when it changes: assigning it clears the canvas.
+  layout = fitLayout()
+  const w = Math.round(layout.artW * layout.scale * dpr())
+  const h = Math.round(layout.artH * layout.scale * dpr())
+  // Only touch the backing size when it changes: assigning it clears the canvas. The CSS size
+  // comes from the device size, so it is exact at any pixel ratio.
   if (canvas.width !== w || canvas.height !== h) {
     canvas.width = w
     canvas.height = h
-    canvas.style.width = `${layout.artW * layout.scale}px`
-    canvas.style.height = `${layout.artH * layout.scale}px`
   }
+  canvas.style.width = `${w / dpr()}px`
+  canvas.style.height = `${h / dpr()}px`
   draw()
 }
 
 // ---- drawing ---------------------------------------------------------------------------------
 
 function artTransform() {
-  const k = layout.scale * (window.devicePixelRatio || 1)
+  const k = layout.scale * dpr()
   ctx.setTransform(k, 0, 0, k, 0, 0)
   ctx.imageSmoothingEnabled = false
 }
 
 function cssTransform() {
-  const d = window.devicePixelRatio || 1
+  const d = dpr()
   ctx.setTransform(d, 0, 0, d, 0, 0)
 }
 
@@ -1414,15 +1459,9 @@ setInterval(() => {
   draw()
 }, FRAME_MS)
 
-// The canvas sets the office's height, so react to width only, or every resize re-fires.
-let lastWidth = 0
-new ResizeObserver(([entry]) => {
-  const width = Math.round(entry.contentRect.width)
-  if (width === lastWidth) return
-  lastWidth = width
-  // Lay out on the next frame, outside the observer callback, so the resize cannot re-fire it.
-  requestAnimationFrame(resize)
-}).observe(document.getElementById('office'))
+// The office's box follows the panel, not the canvas, so a relayout cannot re-fire this. Lay out
+// on the next frame, outside the observer callback.
+new ResizeObserver(() => requestAnimationFrame(resize)).observe(office)
 
 showMessage('Opening the office...')
 poll()
