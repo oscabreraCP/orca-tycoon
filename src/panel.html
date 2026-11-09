@@ -5,13 +5,17 @@
     <style>
       :root {
         color-scheme: light dark;
+        --pad: 10px;
       }
       * {
         box-sizing: border-box;
       }
       body {
         margin: 0;
-        padding: 10px;
+        padding: var(--pad);
+        height: 100vh;
+        display: flex;
+        flex-direction: column;
         background: var(--orca-background, #15131f);
         color: var(--orca-foreground, #e8e6f0);
         font: 12px/1.35 ui-monospace, 'SF Mono', Menlo, monospace;
@@ -32,18 +36,26 @@
       .stats {
         color: var(--orca-muted-foreground, #9a97a8);
       }
+      /* Takes whatever the header leaves; the office is laid out to fill it, and only an office
+         too crowded to fit at the smallest scale scrolls. */
       #office {
+        flex: 1;
+        min-height: 0;
         width: 100%;
+        overflow: auto;
       }
       #plan {
         display: block;
+        margin: 0 auto;
         image-rendering: pixelated;
         cursor: pointer;
       }
+      /* Floats over the floor, so showing it never changes the room the office has. */
       #detail {
-        position: sticky;
-        bottom: 0;
-        margin-top: 10px;
+        position: fixed;
+        left: var(--pad);
+        right: var(--pad);
+        bottom: var(--pad);
         padding: 8px 10px;
         background: var(--orca-popover, #221f30);
         color: var(--orca-popover-foreground, inherit);
@@ -93,8 +105,8 @@
       <h1>ORCA TYCOON</h1>
       <span class="stats" id="stats"></span>
     </header>
+    <div class="empty" id="message" hidden></div>
     <main id="office">
-      <div class="empty" id="message" hidden></div>
       <canvas id="plan"></canvas>
     </main>
     <section id="detail" hidden></section>

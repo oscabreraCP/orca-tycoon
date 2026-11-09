@@ -94,7 +94,10 @@ office model (`src/protocol.ts`): projects, seats, and each seat's specialists.
 
 The panel (`src/panel.html`, `src/panel.js`, `src/sprites.js`) polls the worker every 3 seconds,
 the same rate Orca's phone app uses, and draws one canvas at 8 frames a second. Every sprite is
-drawn in code, so the plugin loads no assets and makes no network requests.
+drawn in code, so the plugin loads no assets and makes no network requests. The office fills the
+panel: it is drawn at the biggest whole pixel scale at which the whole building fits, and the
+corridors between rooms widen so the bottom wall reaches the panel's bottom edge. Only an office
+too crowded to fit at the smallest scale scrolls.
 
 ### Permissions
 
