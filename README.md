@@ -39,7 +39,7 @@ The worker looks for the Orca CLI at `/Applications/Orca.app/Contents/Resources/
 - **Subagents are specialists.** Every desk has a stool at its end, the second seat. When an
   agent calls in a subagent, a specialist walks in through the front door in the side wall, sits on that stool
   leaning in toward the screen, and leaves the same way when the job is done. A desk grows up to
-  three stools and shows `+N` beyond that. The badge on a specialist's shirt is coloured by role,
+  three stools and shows a `+` on the last one beyond that. The badge on a specialist's shirt is coloured by role,
   the same across the whole office.
 - **Idle agents take a break.** A band across the middle of the floor holds the commons: a lounge
   with a sofa, the coffee corner and kitchen, a foosball table and calling booths. Agents that are
