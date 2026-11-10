@@ -20,6 +20,7 @@ import {
   coffeeMachine,
   desk,
   foosball,
+  glyph,
   kitchen,
   lounger,
   lounge,
@@ -59,7 +60,7 @@ const LABEL_H = 5 // nameplate under each seat
 const AISLE = 7 // walkway below each row of desks
 const DESK_W = SEAT_W + 4 // one agent's desk
 const STOOL_W = 9 // one stool at the end of a desk
-const MAX_STOOLS = 3 // beyond this a desk shows +N
+const MAX_STOOLS = 3 // beyond this the last stool carries a + marker
 const LINE_H = SEAT_H + LABEL_H + AISLE
 const TABLE_GAP = 6
 const MIN_ROOM_W = (DESK_W + STOOL_W + 1) * 2 + PAD * 2 + GLASS * 2
@@ -1197,15 +1198,15 @@ function draw() {
   for (const seat of layout.seats) desk(painter(ctx, seat.x - 2, seat.y), DESK_W)
   for (const seat of layout.seats) workstation(painter(ctx, seat.x, seat.y), seat.staff, tick, walkers.has(seat.key))
   // stools at the end of each desk, then whoever is sitting on them
-  for (const seat of layout.seats) {
-    for (const at of seat.stools) stool(painter(ctx, at.x, at.y))
-    if (seat.overflow) {
-      const last = seat.stools[seat.stools.length - 1]
-      glyph(p, '+', last.x + 2, last.y - 13, C.white)
-    }
-  }
+  for (const seat of layout.seats) for (const at of seat.stools) stool(painter(ctx, at.x, at.y))
   for (const v of visitors.values()) {
     if (v.mode === 'seated') specialist(painter(ctx, Math.round(v.x) + 1, Math.round(v.y) + 2), v.spec, tick)
+  }
+  // more specialists than stools: a + beside the last sitter's head, in the gap before the next desk
+  for (const seat of layout.seats) {
+    if (!seat.overflow) continue
+    const last = seat.stools[seat.stools.length - 1]
+    glyph(p, '+', last.x + 7, last.y - 10, C.white)
   }
 
   // people up and about, Palú and specialists on their way, nearest the bottom drawn last, so
