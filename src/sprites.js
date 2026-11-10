@@ -19,6 +19,9 @@ export const C = {
   chairDark: '#36354a',
   frame: '#2a2833',
   screen: '#121722',
+  thinFrame: '#c9ccd8',
+  thinEdge: '#8e92a6',
+  thinBox: '#e4e6ee',
   green: '#4be08f',
   amber: '#f6b23c',
   red: '#ff5468',
@@ -112,12 +115,25 @@ export function person(p, staff, t, away = false) {
   }
 }
 
-/** Monitor facing the viewer plus hands and props, drawn after the desk. */
-export function workstation(p, staff, t, away = false) {
+/**
+ * Monitor facing the viewer plus hands and props, drawn after the desk. An agent on a paired
+ * Orca server works on a thin client: a pale terminal and a slim box on the desk beside it,
+ * whose link light blinks while the far machine is busy.
+ */
+export function workstation(p, staff, t, away = false, remote = false) {
   const s = staff.state
   const { skin } = look(staff.id || 'x')
   // monitor
-  p(5, 9, 10, 7, C.frame)
+  if (remote) {
+    p(5, 9, 10, 7, C.thinFrame)
+    p(5, 15, 10, 1, C.thinEdge)
+    p(2, 10, 2, 6, C.thinBox)
+    p(2, 15, 2, 1, C.thinEdge)
+    const busy = s === 'working' || s === 'monitoring'
+    p(2, 11, 1, 1, busy && (t >> 1) % 2 ? C.blue : C.thinEdge)
+  } else {
+    p(5, 9, 10, 7, C.frame)
+  }
   p(6, 10, 8, 5, C.screen)
   if (s === 'working') {
     const colors = [C.green, C.blue, C.amber]

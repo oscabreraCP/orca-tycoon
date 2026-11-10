@@ -1,6 +1,7 @@
-// Reads every agent on this Orca host through `orca worktree ps --json`, the same rows Orca's
-// sidebar and phone app draw from. The plugin API's agents.list only covers the focused
-// workspace, so the worker asks the CLI instead and trims the answer to what the office draws.
+// Reads every agent through `orca worktree ps --json`, the same rows Orca's sidebar and phone app
+// draw from. The plugin API's agents.list only covers the focused workspace, so the worker asks
+// the CLI instead and trims the answer to what the office draws. One call covers this machine and
+// its SSH targets; each paired Orca server (a cloud VM) answers only its own `--environment` call.
 import type { OrcaWorkerApi } from 'orca/worker'
 import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
@@ -11,15 +12,18 @@ const CLI_CANDIDATES = [
   `${process.env.HOME ?? ''}/Applications/Orca.app/Contents/Resources/bin/orca`
 ]
 const CLI_TIMEOUT_MS = 8000
+// a paired server gets less, so this machine's call plus the slowest server's stay under the
+// panel's 15 s wait for a snapshot
+const SERVER_TIMEOUT_MS = 5000
 
 function cliPath(): string {
   return CLI_CANDIDATES.find((p) => existsSync(p)) ?? 'orca'
 }
 
 /** Runs the CLI with an argument array (never a shell) and parses its JSON answer. */
-function runCli(args: string[]): Promise<unknown> {
+function runCli(args: string[], timeout = CLI_TIMEOUT_MS): Promise<unknown> {
   return new Promise((resolve, reject) => {
-    execFile(cliPath(), args, { timeout: CLI_TIMEOUT_MS, maxBuffer: 32 * 1024 * 1024 }, (error, stdout) => {
+    execFile(cliPath(), args, { timeout, maxBuffer: 32 * 1024 * 1024 }, (error, stdout) => {
       if (error && !stdout) return reject(error)
       let parsed: unknown
       try {
@@ -37,10 +41,56 @@ function runCli(args: string[]): Promise<unknown> {
   })
 }
 
-const runPs = (): Promise<unknown> => runCli(['worktree', 'ps', '--json'])
-
 type Row = Record<string, unknown>
 const str = (v: unknown): string | null => (typeof v === 'string' && v.trim() ? v.trim() : null)
+
+/** One paired Orca server's `worktree ps` answer, with the selector that reached it. */
+export type ServerAnswer = { environment: string; raw: unknown }
+
+const RUNTIME_HOST = 'runtime:'
+
+/**
+ * The paired servers a local `worktree ps` names as not covered, by environment id. Orca's own
+ * selector uses the server's name, which two servers can share; the id always resolves to one.
+ */
+export function pairedEnvironments(raw: unknown): string[] {
+  const scope = (raw as { result?: { hostScope?: { omittedHostIds?: unknown } } } | null)?.result?.hostScope
+  const hostIds = Array.isArray(scope?.omittedHostIds) ? scope.omittedHostIds : []
+  const ids = hostIds
+    .map((h) => str(h))
+    .filter((h): h is string => !!h && h.startsWith(RUNTIME_HOST))
+    .map((h) => {
+      try {
+        return decodeURIComponent(h.slice(RUNTIME_HOST.length)).trim()
+      } catch {
+        return ''
+      }
+    })
+    .filter(Boolean)
+  return [...new Set(ids)]
+}
+
+/**
+ * This machine's answer, then every paired server's in parallel. A server that is down or slow
+ * costs only its own desks: `onServerError` hears about it and the rest of the office still draws.
+ */
+export async function readAllHosts(
+  run: (args: string[], timeout?: number) => Promise<unknown>,
+  onServerError: (environment: string, error: unknown) => void = () => {}
+): Promise<{ local: unknown; servers: ServerAnswer[] }> {
+  const local = await run(['worktree', 'ps', '--json'])
+  const answers = await Promise.all(
+    pairedEnvironments(local).map(async (environment) => {
+      try {
+        return { environment, raw: await run(['worktree', 'ps', '--json', '--environment', environment], SERVER_TIMEOUT_MS) }
+      } catch (error) {
+        onServerError(environment, error)
+        return null
+      }
+    })
+  )
+  return { local, servers: answers.filter((a): a is ServerAnswer => a !== null) }
+}
 
 export function staffState(row: Row): StaffState {
   const state = row.state
@@ -250,20 +300,34 @@ function toStaff(row: Row, deskName: string, generic: boolean): Staff {
   }
 }
 
-export function toSnapshot(raw: unknown, at: number): OfficeSnapshot {
-  const result = (raw as { result?: { worktrees?: Row[] } })?.result
-  const worktrees = Array.isArray(result?.worktrees) ? result.worktrees : []
-  const live = worktrees.filter((w) => w.isArchived !== true && Array.isArray(w.agents) && w.agents.length > 0)
+const worktreesOf = (raw: unknown): Row[] => {
+  const worktrees = (raw as { result?: { worktrees?: unknown } } | null)?.result?.worktrees
+  return Array.isArray(worktrees) ? (worktrees as Row[]) : []
+}
+
+/**
+ * The office from this machine's `worktree ps` answer and each paired server's. A server's desks
+ * join the team of their project like any other, their ids prefixed with the server so a desk
+ * there never collides with one here, and they carry the selector "Open in Orca" goes through.
+ */
+export function toSnapshot(raw: unknown, at: number, servers: ServerAnswer[] = []): OfficeSnapshot {
+  type Placed = { w: Row; environment: string | null }
+  const all: Placed[] = [
+    ...worktreesOf(raw).map((w) => ({ w, environment: null })),
+    ...servers.flatMap((s) => worktreesOf(s.raw).map((w) => ({ w, environment: s.environment })))
+  ]
+  const live = all.filter(({ w }) => w.isArchived !== true && Array.isArray(w.agents) && w.agents.length > 0)
+  const idOf = (id: string | null, environment: string | null) => (id && environment ? `${environment}|${id}` : id)
   const repoOf = (w: Row) => str(w.repo) ?? 'Other'
   const nameOf = (w: Row) => str(w.displayName) ?? str(w.branch)?.replace(/^refs\/heads\//, '') ?? 'workspace'
   // names several desks in one project share tell those desks apart from nothing
   const seen = new Map<string, number>()
-  for (const w of live) {
+  for (const { w } of live) {
     const key = `${repoOf(w)}\n${nameOf(w).toLowerCase()}`
     seen.set(key, (seen.get(key) ?? 0) + 1)
   }
   const floors = new Map<string, Desk[]>()
-  for (const w of live) {
+  for (const { w, environment } of live) {
     const agents = w.agents as Row[]
     const repo = repoOf(w)
     const branch = str(w.branch)?.replace(/^refs\/heads\//, '') ?? null
@@ -274,10 +338,12 @@ export function toSnapshot(raw: unknown, at: number): OfficeSnapshot {
       isGenericName(name, defaultBranch) ||
       (seen.get(`${repo}\n${name.toLowerCase()}`) ?? 0) > 1
     const desk: Desk = {
-      id: String(w.worktreeId ?? ''),
+      id: idOf(String(w.worktreeId ?? ''), environment) ?? '',
       name,
       branch,
-      parentId: str(w.parentWorktreeId),
+      parentId: idOf(str(w.parentWorktreeId), environment),
+      environment,
+      host: environment ? str((w.environment as Row | null)?.name) ?? environment : null,
       staff: agents.map((row) => toStaff(row, name, generic))
     }
     const list = floors.get(repo) ?? []
@@ -327,21 +393,34 @@ export function worktreeActivateArgs(paneKey: string, raw: unknown): string[] | 
 
 const PANE_KEY_MAX = 512
 
-/** Answers 'office.switch'. `run` is the CLI: an argument array in, its parsed JSON out. */
-export async function switchTo(input: unknown, run: (args: string[]) => Promise<unknown>): Promise<SwitchOutcome> {
+/**
+ * Answers 'office.switch'. `run` is the CLI: an argument array in, its parsed JSON out. An agent
+ * on a paired server names its `environment`, which must be one Orca itself listed (`known`), so
+ * the panel can only pick a server, never pass the CLI a flag of its own.
+ */
+export async function switchTo(
+  input: unknown,
+  run: (args: string[]) => Promise<unknown>,
+  known: readonly string[] = []
+): Promise<SwitchOutcome> {
   const paneKey = str((input as { paneKey?: unknown } | null)?.paneKey)
   if (!paneKey || paneKey.length > PANE_KEY_MAX) return { ok: false, error: 'no pane key' }
+  const environment = (input as { environment?: unknown }).environment ?? null
+  if (environment !== null && (typeof environment !== 'string' || !known.includes(environment))) {
+    return { ok: false, error: 'that Orca server is not paired' }
+  }
+  const on = environment ? ['--environment', environment] : []
   try {
     if (!isChatSession(paneKey)) {
-      const terminal = terminalSwitchArgs(paneKey, await run(['terminal', 'list', '--json']))
+      const terminal = terminalSwitchArgs(paneKey, await run(['terminal', 'list', '--json', ...on]))
       if (terminal) {
-        await run([...terminal, '--json'])
+        await run([...terminal, '--json', ...on])
         return { ok: true, via: 'terminal' }
       }
     }
-    const worktree = worktreeActivateArgs(paneKey, await run(['worktree', 'ps', '--json']))
+    const worktree = worktreeActivateArgs(paneKey, await run(['worktree', 'ps', '--json', ...on]))
     if (!worktree) return { ok: false, error: 'this agent is no longer in Orca' }
-    await run([...worktree, '--json'])
+    await run([...worktree, '--json', ...on])
     return { ok: true, via: 'worktree' }
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : String(error) }
@@ -350,9 +429,14 @@ export async function switchTo(input: unknown, run: (args: string[]) => Promise<
 
 export default function activate(orca: OrcaWorkerApi): void {
   let last: OfficeSnapshot = { at: 0, floors: [], error: null }
+  let environments: string[] = []
   orca.panels.handle('office.snapshot', async () => {
     try {
-      last = toSnapshot(await runPs(), Date.now())
+      const { local, servers } = await readAllHosts(runCli, (environment, error) =>
+        orca.log(`worktree ps on ${environment} failed: ${error instanceof Error ? error.message : String(error)}`)
+      )
+      environments = pairedEnvironments(local)
+      last = toSnapshot(local, Date.now(), servers)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       orca.log(`worktree ps failed: ${message}`)
@@ -361,7 +445,7 @@ export default function activate(orca: OrcaWorkerApi): void {
     return last
   })
   orca.panels.handle('office.switch', async (input) => {
-    const outcome = await switchTo(input, runCli)
+    const outcome = await switchTo(input, runCli, environments)
     if (!outcome.ok) orca.log(`open in Orca failed: ${outcome.error}`)
     return outcome
   })

@@ -33,6 +33,10 @@ export type Desk = {
   name: string
   branch: string | null
   parentId: string | null
+  /** The `--environment` selector of the paired Orca server it runs on; null on this machine. */
+  environment: string | null
+  /** That server's name, for the detail box; null on this machine. */
+  host: string | null
   staff: Staff[]
 }
 
@@ -52,6 +56,6 @@ declare module 'orca' {
     /** Every workspace with its agents and their subagents, grouped by project. */
     'office.snapshot': { output: OfficeSnapshot }
     /** Brings an agent to the front in Orca: its terminal tab, or its worktree for a Chat UI session. */
-    'office.switch': { input: { paneKey: string }; output: SwitchOutcome }
+    'office.switch': { input: { paneKey: string; environment?: string | null }; output: SwitchOutcome }
   }
 }
