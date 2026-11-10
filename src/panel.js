@@ -1196,7 +1196,7 @@ function draw() {
   // desks: people first, then the desk over their laps, then monitors and hands
   for (const seat of layout.seats) drawSeat(seat)
   for (const seat of layout.seats) desk(painter(ctx, seat.x - 2, seat.y), DESK_W)
-  for (const seat of layout.seats) workstation(painter(ctx, seat.x, seat.y), seat.staff, tick, walkers.has(seat.key))
+  for (const seat of layout.seats) workstation(painter(ctx, seat.x, seat.y), seat.staff, tick, walkers.has(seat.key), Boolean(seat.desk.environment))
   // stools at the end of each desk, then whoever is sitting on them
   for (const seat of layout.seats) for (const at of seat.stools) stool(painter(ctx, at.x, at.y))
   for (const v of visitors.values()) {
@@ -1299,7 +1299,7 @@ async function openInOrca(seat) {
   renderDetail()
   let outcome
   try {
-    outcome = await orca.plugin.request('office.switch', { paneKey: seat.staff.id }, { timeoutMs: 20000 })
+    outcome = await orca.plugin.request('office.switch', { paneKey: seat.staff.id, environment: seat.desk.environment ?? null }, { timeoutMs: 20000 })
   } catch (error) {
     outcome = { ok: false, error: error?.message ?? String(error) }
   }
@@ -1317,6 +1317,7 @@ function renderDetail() {
   }
   const { desk: d, staff } = seat
   const lines = [el('div', '', d.name)]
+  if (d.host) lines.push(el('div', 'row', `on ${d.host}`))
   lines.push(el('div', 'row', `${staff.agent ?? 'agent'} · ${STATE_LABEL[staff.state]} for ${since(staff.since)}`))
   if (staff.task && staff.task !== d.name) lines.push(el('div', 'row', staff.task))
   if (staff.tool && staff.state === 'working') lines.push(el('div', 'row', `using ${staff.tool}`))

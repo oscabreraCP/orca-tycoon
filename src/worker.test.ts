@@ -1,7 +1,16 @@
 // Runs the mapping from `orca worktree ps --json` rows to the office model, and the lookup from
 // an agent's pane key to the CLI call that brings it to the front.
 import { assert, test } from 'orca/testing'
-import { isChatSession, labelOf, switchTo, terminalSwitchArgs, toSnapshot, worktreeActivateArgs } from './worker'
+import {
+  isChatSession,
+  labelOf,
+  pairedEnvironments,
+  readAllHosts,
+  switchTo,
+  terminalSwitchArgs,
+  toSnapshot,
+  worktreeActivateArgs
+} from './worker'
 
 test('groups agents by project and keeps subagents as specialists', () => {
   const raw = {
@@ -286,4 +295,110 @@ test('only generic workspace names borrow the conversation title', () => {
   const labels = toSnapshot(raw, 1).floors[0].desks.map((d) => d.staff[0].label)
   // own name kept; the repo's default branch, the main checkout and a shared name take the title
   assert.deepEqual(labels, ['checkout-redesign', 'Title', 'Title', 'Title', 'Title'])
+})
+
+// ---- paired Orca servers ------------------------------------------------------------------------
+// A local `worktree ps` covers this machine and its SSH targets, and names each paired server it
+// leaves out under hostScope.omittedHostIds as runtime:<environment id>. Their rows call
+// themselves host=local too, and carry the server's environment id and name.
+
+const LOCAL_PS = {
+  ok: true,
+  result: {
+    worktrees: [{ worktreeId: 'repo::/Users/me/platform', repo: 'platform', displayName: 'TTM-1', agents: [{ paneKey: 'a:1', state: 'working' }] }],
+    hostScope: {
+      hostIds: ['local'],
+      omittedHostIds: ['runtime:aaa', 'runtime:bbb', 'ssh:x'],
+      omittedHostSelectors: [
+        { hostId: 'runtime:aaa', selector: '--environment lane-poc' },
+        { hostId: 'runtime:bbb', selector: '--environment lane-poc' },
+        { hostId: 'ssh:x', selector: '--host ssh:x' }
+      ]
+    }
+  }
+}
+const SERVER_PS = {
+  ok: true,
+  result: {
+    worktrees: [
+      {
+        worktreeId: 'repo::/home/worker/ttm-2',
+        parentWorktreeId: 'repo::/home/worker/main',
+        repo: 'platform',
+        displayName: 'TTM-2',
+        environment: { id: 'aaa', name: 'lane-poc' },
+        agents: [{ paneKey: 'b:2', state: 'waiting' }]
+      }
+    ]
+  }
+}
+
+test('finds the paired servers a local answer leaves out by id, even when two share a name', () => {
+  assert.deepEqual(pairedEnvironments(LOCAL_PS), ['aaa', 'bbb'])
+  assert.deepEqual(pairedEnvironments({ result: { hostScope: { omittedHostIds: ['runtime:a%20b', 'runtime:%E0%A4%A', 'runtime:'] } } }), ['a b'])
+  assert.deepEqual(pairedEnvironments({ result: { hostScope: { omittedHostIds: [] } } }), [])
+  assert.deepEqual(pairedEnvironments(null), [])
+})
+
+test('asks every paired server, and a server that fails costs only its own desks', async () => {
+  const calls: string[][] = []
+  const timeouts: (number | undefined)[] = []
+  const failed: string[] = []
+  const { local, servers } = await readAllHosts(
+    async (args, timeout) => {
+      calls.push(args)
+      timeouts.push(timeout)
+      if (args.includes('bbb')) throw new Error('unreachable')
+      return args.includes('aaa') ? SERVER_PS : LOCAL_PS
+    },
+    (environment) => failed.push(environment)
+  )
+  assert.equal(local, LOCAL_PS)
+  assert.deepEqual(calls, [
+    ['worktree', 'ps', '--json'],
+    ['worktree', 'ps', '--json', '--environment', 'aaa'],
+    ['worktree', 'ps', '--json', '--environment', 'bbb']
+  ])
+  // this machine keeps the default wait; a server gets a shorter one
+  assert.equal(timeouts[0], undefined)
+  assert.ok(timeouts[1]! < 8000 && timeouts[2]! < 8000)
+  assert.deepEqual(servers, [{ environment: 'aaa', raw: SERVER_PS }])
+  assert.deepEqual(failed, ['bbb'])
+})
+
+test('agents on a paired server join the team of their project, marked with the server', () => {
+  const snap = toSnapshot(LOCAL_PS, 1, [{ environment: 'aaa', raw: SERVER_PS }])
+  assert.deepEqual(snap.floors.map((f) => f.repo), ['platform'])
+  const [here, there] = snap.floors[0].desks
+  assert.equal(here.id, 'repo::/Users/me/platform')
+  assert.equal(here.environment, null)
+  assert.equal(here.host, null)
+  assert.equal(there.id, 'aaa|repo::/home/worker/ttm-2')
+  assert.equal(there.parentId, 'aaa|repo::/home/worker/main')
+  assert.equal(there.environment, 'aaa')
+  assert.equal(there.host, 'lane-poc')
+  assert.equal(there.staff[0].id, 'b:2')
+  assert.equal(there.staff[0].state, 'waiting')
+})
+
+test('switchTo reaches a paired server through its selector, and only one Orca listed', async () => {
+  const calls: string[][] = []
+  const spy = async (args: string[]) => {
+    calls.push(args)
+    return args[1] === 'list' ? { result: { terminals: [{ tabId: 'b', leafId: '2', handle: 'term_r' }] } } : { ok: true }
+  }
+  assert.deepEqual(await switchTo({ paneKey: 'b:2', environment: 'aaa' }, spy, ['aaa']), {
+    ok: true,
+    via: 'terminal'
+  })
+  assert.deepEqual(calls, [
+    ['terminal', 'list', '--json', '--environment', 'aaa'],
+    ['terminal', 'switch', '--terminal', 'term_r', '--json', '--environment', 'aaa']
+  ])
+  calls.length = 0
+  for (const environment of ['lane-poc', 'zzz', '--pairing-code', 7, ['aaa']]) {
+    const out = await switchTo({ paneKey: 'b:2', environment }, spy, ['aaa'])
+    assert.equal(out.ok, false, `accepted ${JSON.stringify(environment)}`)
+  }
+  assert.deepEqual(calls, [])
 })

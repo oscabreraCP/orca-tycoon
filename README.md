@@ -5,8 +5,8 @@ Your coding agents, as tiny pixel staff in an office you can watch.
 ![The Orca Tycoon office: five teams at their desks, specialists on stools beside their agents, and a commons band in the middle with the lounge, coffee corner, foosball table, calling booths and Palú asleep in his bed](docs/office.png)
 
 Orca Tycoon is a plugin for [Orca](https://github.com/stablyai/orca), the desktop app for running
-many coding agents in parallel git worktrees. It draws every agent on your machine as a little
-worker in an office, in the style of tycoon and office-sim games. You get a glance at who is busy,
+many coding agents in parallel git worktrees. It draws every agent on your machine, its SSH targets and the
+Orca servers you paired, such as a cloud VM, as a little worker in an office, in the style of tycoon and office-sim games. You get a glance at who is busy,
 who needs you and who is done, without having to click through every workspace.
 
 ## Install
@@ -79,7 +79,10 @@ the tool and input Orca already reports, so no model is asked. A specialist tell
 was called in for. The side panel shows the worktree, state, task, current tool and specialists,
 and its Open in Orca button brings the agent's terminal tab to the front. A Chat UI session has no
 terminal tab, so for one the button shows its worktree instead, as clicking it in the sidebar does.
-Clicking a person or a desk never moves Orca's focus; only the button does.
+Clicking a person or a desk never moves Orca's focus; only the button does. An agent on a paired
+Orca server sits with the team of its project at a thin client: a pale terminal with a slim box
+beside it whose light blinks while it works. The side panel names the server it runs on.
+If a server cannot be reached, only its desks go missing until it answers again.
 
 ![An agent finishes with a speech bubble, walks down to the commons and takes a call in a booth, then walks back to its desk when new work arrives](docs/break.gif)
 
