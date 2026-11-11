@@ -250,9 +250,8 @@ function computeLayout(cssW, scale, corridor = GAP) {
   // Max columns: 1 column if 1 team, 2 columns for 2-4 teams, 3 columns only for 5+ teams
   const maxCols = teamCount >= 5 ? 3 : Math.min(2, teamCount)
 
-  // Use full available length up to 70% max
-  const maxAllowedFloorW = Math.floor(rawFloorW * 0.70)
-  const floorW = Math.min(rawFloorW, Math.max(MIN_ROOM_W, maxAllowedFloorW))
+  // Use full available width (100%)
+  const floorW = Math.max(MIN_ROOM_W, rawFloorW)
   const artW = floorW + OUTER * 2 + MARGIN * 2
   const cols = Math.max(1, Math.min(maxCols, Math.floor((floorW + GAP) / (MIN_ROOM_W + GAP))))
   const roomW = Math.floor((floorW - GAP * (cols - 1)) / cols)
@@ -412,15 +411,14 @@ function fitLayout() {
   const perPx = Number.isInteger(dpr()) ? dpr() : 1 // scale steps per CSS pixel
   const minScale = cssW >= 300 ? 3 : 2
 
-  // First pass: reserve breathing room at bottom so desks aren't covered by detail card
-  const reserveH = cssH >= 450 ? 130 : 0
-  const targetH = cssH - reserveH
+  // Limit office height to 70% max of panel height, keeping bottom 30% clear
+  const maxTargetH = Math.floor(cssH * 0.70)
 
   for (let n = MAX_SCALE * perPx; n / perPx >= minScale; n--) {
     const scale = n / perPx
     if (Math.floor(cssW / scale) < MIN_ART_W) continue
     const candidate = computeLayout(cssW, scale, GAP)
-    if (candidate.artH * scale <= targetH && candidate.artW * scale <= cssW) {
+    if (candidate.artH * scale <= maxTargetH && candidate.artW * scale <= cssW) {
       return candidate
     }
   }
