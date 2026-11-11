@@ -312,63 +312,100 @@ function computeLayout(cssW, scale, corridor = GAP) {
   }
   const top = pack(topList, OUTER + MARGIN)
 
-  // The commons band across the middle: lounge, coffee corner (water dispenser, coffee machine)
-  // and kitchen. Wide floors put them side by side; narrow ones stack the lounge above.
+  // The commons band across the middle: lounge, coffee corner (water dispenser, coffee machine),
+  // kitchen, foosball, dog bed, and phone booths.
+  // Wide floors (>=260) fit everything side-by-side in a single 1-row band to eliminate dead space;
+  // narrower floors stack them across 2 or 3 rows.
   const wide = floorW >= 150
+  const singleRow = floorW >= 260
   const bandY = plans.length ? top.bottom : OUTER + MARGIN
-  const rows = wide ? 2 : 3
+  const rows = singleRow ? 1 : wide ? 2 : 3
   const bandH = COMMON_H * rows
   const gamesY = bandY + COMMON_H * (rows - 1)
   const entry = 10 // a clear strip by the door
   const common = { x: OUTER + MARGIN, y: bandY, w: floorW, h: bandH }
-  const loungeW = Math.min(72, wide ? Math.floor((floorW - GAP) / 2) - entry : floorW - entry)
-  const cornerX = wide ? common.x + entry + loungeW + GAP : common.x + entry
-  const cornerY = wide ? bandY : bandY + COMMON_H
-  common.lounge = { x: common.x + entry, y: bandY + 4, w: loungeW }
-  common.cooler = { x: cornerX + 2, y: cornerY + 2 }
-  common.coffee = { x: cornerX + 12, y: cornerY + 4 }
-  common.kitchen = { x: cornerX + 24, y: cornerY + 6, w: Math.min(48, Math.max(30, common.x + floorW - cornerX - 24)) }
   common.laneTop = bandY - 4
   common.laneBottom = bandY + bandH - 8
-  common.spots = []
-  const kitchenEnd = cornerX + 24 + common.kitchen.w
-  for (let sx = cornerX; sx + 8 <= Math.min(common.x + floorW, kitchenEnd + 8); sx += 9) common.spots.push({ x: sx, y: cornerY + 17, kind: 'coffee' })
-  // the games row: a foosball table, and calling booths along the right
-  const fx = common.x + entry + 12
-  common.foosball = { x: fx, y: gamesY + 7 }
-  // players stand on the long sides, where the rods stick out: one behind the table facing you,
-  // one in front with their back to you
-  common.foos = [
-    { x: fx + 5, y: gamesY + 7 - 15, kind: 'foosball', left: false, back: false },
-    { x: fx + 15, y: gamesY + 7 + 12, kind: 'foosball', left: false, back: true }
-  ]
-  common.booths = []
-  const boothCount = wide ? 3 : 2
-  for (let i = 0; i < boothCount; i++) {
-    const bx = common.x + floorW - (i + 1) * 16
-    common.booths.push({ x: bx + 2, y: gamesY + 9, kind: 'booth', left: true, bx, by: gamesY + 5 })
-  }
-  common.sofa = []
-  const sofaSeats = Math.min(6, Math.floor((loungeW - 12) / 9))
-  for (let i = 0; i < sofaSeats; i++) common.sofa.push({ x: common.lounge.x + 6 + i * 9, y: common.lounge.y + 1, kind: 'lounge' })
-  // The front door is in the left wall, level with the band.
   const doorY = bandY + 8
-  // Palú's bed: in the games row between the foosball table and the booths when it fits, else in
-  // a corner of the lounge rug. His bowls go beside the bed when there is room for both, else in
-  // the lounge's front corner by the door.
-  const gapStart = fx + 34
-  const gapEnd = common.x + floorW - boothCount * 16
-  const gap = gapEnd - gapStart
-  if (gap >= 48) {
-    // bowls first, with room on their left to stand clear of the foosball table, then the bed
-    common.bowls = { x: gapStart + 8 + Math.floor((gap - 48) / 2), y: gamesY + 18 }
-    common.bed = { x: common.bowls.x + 16, y: gamesY + 14 }
+
+  if (singleRow) {
+    const loungeW = Math.min(68, Math.max(50, Math.floor((floorW - entry) * 0.22)))
+    const cornerX = common.x + entry + loungeW + 6
+    const kitchenW = 48
+    const kitchenX = cornerX + 22
+    const kitchenEnd = kitchenX + kitchenW
+    common.lounge = { x: common.x + entry, y: bandY + 4, w: loungeW }
+    common.cooler = { x: cornerX + 2, y: bandY + 2 }
+    common.coffee = { x: cornerX + 11, y: bandY + 4 }
+    common.kitchen = { x: kitchenX, y: bandY + 6, w: kitchenW }
+    common.spots = []
+    for (let sx = cornerX; sx + 8 <= kitchenEnd; sx += 9) {
+      common.spots.push({ x: sx, y: bandY + 17, kind: 'coffee' })
+    }
+
+    const fx = kitchenEnd + 12
+    common.foosball = { x: fx, y: bandY + 10 }
+    common.foos = [
+      { x: fx + 5, y: bandY + 10 - 14, kind: 'foosball', left: false, back: false },
+      { x: fx + 15, y: bandY + 10 + 12, kind: 'foosball', left: false, back: true }
+    ]
+
+    common.bowls = { x: fx + 34, y: bandY + 18 }
+    common.bed = { x: common.bowls.x + 16, y: bandY + 14 }
+
+    common.booths = []
+    const boothCount = 3
+    for (let i = 0; i < boothCount; i++) {
+      const bx = common.x + floorW - (i + 1) * 16
+      common.booths.push({ x: bx + 2, y: bandY + 9, kind: 'booth', left: true, bx, by: bandY + 5 })
+    }
+
+    common.sofa = []
+    const sofaSeats = Math.min(6, Math.floor((loungeW - 12) / 9))
+    for (let i = 0; i < sofaSeats; i++) {
+      common.sofa.push({ x: common.lounge.x + 6 + i * 9, y: common.lounge.y + 1, kind: 'lounge' })
+    }
   } else {
-    common.bed =
-      gap >= 30
-        ? { x: gapStart + Math.floor((gap - 24) / 2), y: gamesY + 14 }
-        : { x: common.lounge.x + common.lounge.w - 27, y: common.lounge.y + 16 }
-    common.bowls = { x: common.lounge.x + 3, y: common.lounge.y + 19 }
+    const loungeW = Math.min(72, wide ? Math.floor((floorW - GAP) / 2) - entry : floorW - entry)
+    const cornerX = wide ? common.x + entry + loungeW + GAP : common.x + entry
+    const cornerY = wide ? bandY : bandY + COMMON_H
+    common.lounge = { x: common.x + entry, y: bandY + 4, w: loungeW }
+    common.cooler = { x: cornerX + 2, y: cornerY + 2 }
+    common.coffee = { x: cornerX + 12, y: cornerY + 4 }
+    common.kitchen = { x: cornerX + 24, y: cornerY + 6, w: Math.min(48, Math.max(30, common.x + floorW - cornerX - 24)) }
+    common.spots = []
+    const kitchenEnd = cornerX + 24 + common.kitchen.w
+    for (let sx = cornerX; sx + 8 <= Math.min(common.x + floorW, kitchenEnd + 8); sx += 9) common.spots.push({ x: sx, y: cornerY + 17, kind: 'coffee' })
+
+    const fx = common.x + entry + 12
+    common.foosball = { x: fx, y: gamesY + 7 }
+    common.foos = [
+      { x: fx + 5, y: gamesY + 7 - 15, kind: 'foosball', left: false, back: false },
+      { x: fx + 15, y: gamesY + 7 + 12, kind: 'foosball', left: false, back: true }
+    ]
+    common.booths = []
+    const boothCount = wide ? 3 : 2
+    for (let i = 0; i < boothCount; i++) {
+      const bx = common.x + floorW - (i + 1) * 16
+      common.booths.push({ x: bx + 2, y: gamesY + 9, kind: 'booth', left: true, bx, by: gamesY + 5 })
+    }
+    common.sofa = []
+    const sofaSeats = Math.min(6, Math.floor((loungeW - 12) / 9))
+    for (let i = 0; i < sofaSeats; i++) common.sofa.push({ x: common.lounge.x + 6 + i * 9, y: common.lounge.y + 1, kind: 'lounge' })
+
+    const gapStart = fx + 34
+    const gapEnd = common.x + floorW - boothCount * 16
+    const gap = gapEnd - gapStart
+    if (gap >= 48) {
+      common.bowls = { x: gapStart + 8 + Math.floor((gap - 48) / 2), y: gamesY + 18 }
+      common.bed = { x: common.bowls.x + 16, y: gamesY + 14 }
+    } else {
+      common.bed =
+        gap >= 30
+          ? { x: gapStart + Math.floor((gap - 24) / 2), y: gamesY + 14 }
+          : { x: common.lounge.x + common.lounge.w - 27, y: common.lounge.y + 16 }
+      common.bowls = { x: common.lounge.x + 3, y: common.lounge.y + 19 }
+    }
   }
 
   const bottom = pack(plans.slice(split), bandY + bandH + corridor)
