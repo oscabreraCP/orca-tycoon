@@ -249,13 +249,12 @@ function computeLayout(cssW, scale, corridor = GAP) {
   const teamCount = Math.max(1, floorList.length)
   // Max columns: 1 column if 1 team, 2 columns for 2-4 teams, 3 columns only for 5+ teams
   const maxCols = teamCount >= 5 ? 3 : Math.min(2, teamCount)
-  const cols = Math.max(1, Math.min(maxCols, Math.floor((rawFloorW + GAP) / (MIN_ROOM_W + GAP))))
 
-  // Cap floor width to prevent rooms and furniture stretching into empty soccer fields
-  const maxRoomW = 125
-  const maxFloorW = cols * maxRoomW + GAP * (cols - 1)
-  const floorW = Math.min(rawFloorW, Math.max(MIN_ROOM_W, maxFloorW))
+  // Use full available length up to 70% max
+  const maxAllowedFloorW = Math.floor(rawFloorW * 0.70)
+  const floorW = Math.min(rawFloorW, Math.max(MIN_ROOM_W, maxAllowedFloorW))
   const artW = floorW + OUTER * 2 + MARGIN * 2
+  const cols = Math.max(1, Math.min(maxCols, Math.floor((floorW + GAP) / (MIN_ROOM_W + GAP))))
   const roomW = Math.floor((floorW - GAP * (cols - 1)) / cols)
   const innerW = roomW - GLASS * 2 - PAD * 2
 
@@ -413,6 +412,20 @@ function fitLayout() {
   const perPx = Number.isInteger(dpr()) ? dpr() : 1 // scale steps per CSS pixel
   const minScale = cssW >= 300 ? 3 : 2
 
+  // First pass: reserve breathing room at bottom so desks aren't covered by detail card
+  const reserveH = cssH >= 450 ? 130 : 0
+  const targetH = cssH - reserveH
+
+  for (let n = MAX_SCALE * perPx; n / perPx >= minScale; n--) {
+    const scale = n / perPx
+    if (Math.floor(cssW / scale) < MIN_ART_W) continue
+    const candidate = computeLayout(cssW, scale, GAP)
+    if (candidate.artH * scale <= targetH && candidate.artW * scale <= cssW) {
+      return candidate
+    }
+  }
+
+  // Second pass: fit within full height if breathing room scale couldn't be found
   for (let n = MAX_SCALE * perPx; n / perPx >= minScale; n--) {
     const scale = n / perPx
     if (Math.floor(cssW / scale) < MIN_ART_W) continue
@@ -1368,8 +1381,10 @@ function renderDetail() {
   const seat = selected && seatOf(selected)
   if (!seat) {
     box.hidden = true
+    document.body.classList.remove('has-detail')
     return
   }
+  document.body.classList.add('has-detail')
   const { desk: d, staff, room } = seat
   const title = staff.name ? staff.name : d.name
   const header = el('div', 'title', title)
@@ -1404,6 +1419,21 @@ function renderDetail() {
   }
   box.replaceChildren(...lines)
   box.hidden = false
+
+  // If the selected seat would be covered by #detail, smoothly scroll it into view
+  requestAnimationFrame(() => {
+    if (!box.hidden && seat && layout) {
+      const officeRect = office.getBoundingClientRect()
+      const detailRect = box.getBoundingClientRect()
+      const seatBottom = (seat.y + SEAT_H + LABEL_H) * layout.scale
+      const currentScroll = office.scrollTop
+      const seatScreenBottom = officeRect.top + seatBottom - currentScroll
+      if (seatScreenBottom > detailRect.top - 12) {
+        const neededScroll = seatScreenBottom - (detailRect.top - 12)
+        office.scrollTo({ top: currentScroll + neededScroll, behavior: 'smooth' })
+      }
+    }
+  })
 }
 
 function showMessage(text) {
