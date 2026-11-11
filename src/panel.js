@@ -105,7 +105,12 @@ const STATE_NOTE = {
 const office = document.getElementById('office')
 const canvas = document.getElementById('plan')
 const ctx = canvas.getContext('2d')
+const tooltip = document.getElementById('tooltip')
 const dpr = () => window.devicePixelRatio || 1
+
+function escapeHtml(s) {
+  return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+}
 
 let snapshot = null
 let layout = { artW: 0, artH: 0, scale: 3, building: null, rooms: [], seats: [], common: null }
@@ -1423,10 +1428,50 @@ function whoAt(ax, ay) {
 
 canvas.addEventListener('mousemove', (event) => {
   const [ax, ay] = artPoint(event)
-  canvas.style.cursor = whoAt(ax, ay) || onPalu(ax, ay) ? 'pointer' : ''
+  const key = whoAt(ax, ay)
+  const dog = onPalu(ax, ay)
+  canvas.style.cursor = key || dog ? 'pointer' : ''
+
+  if (!tooltip) return
+  if (key) {
+    const seat = seatOf(key)
+    if (seat) {
+      const { desk: d, staff } = seat
+      const room = layout.rooms.find((r) => r.plan.lines.some((l) => l.seats.some((s) => s.key === seat.key)))
+      const title = staff.name || d.name
+      const host = d.host ? ` · on ${d.host}` : ''
+      const loc = `${room?.name ?? ''} · ${d.branch || d.name}${host}`
+      const status = `${staff.agent ?? 'agent'} · ${STATE_LABEL[staff.state]} (${since(staff.since)})`
+      const tool = staff.tool && staff.state === 'working' ? `<br>using <code>${escapeHtml(staff.tool)}</code>` : ''
+      const saying = staff.said ? `<br>“${escapeHtml(staff.said)}”` : ''
+      const specialists = staff.specialists?.length
+        ? `<br>specialists: ${escapeHtml(staff.specialists.map((s) => s.role).filter(Boolean).join(', '))}`
+        : ''
+
+      tooltip.innerHTML = `<div class="title">${escapeHtml(title)}</div><div class="muted">${escapeHtml(loc)}<br>${escapeHtml(status)}${tool}${saying}${specialists}</div>`
+      tooltip.style.display = 'block'
+      const x = Math.min(window.innerWidth - 320, event.clientX + 14)
+      const y = Math.min(window.innerHeight - 120, event.clientY + 14)
+      tooltip.style.left = `${Math.max(10, x)}px`
+      tooltip.style.top = `${Math.max(10, y)}px`
+      return
+    }
+  } else if (dog) {
+    tooltip.innerHTML = `<div class="title">Palú 🐾</div><div class="muted">The office dog. Click to pet him!</div>`
+    tooltip.style.display = 'block'
+    tooltip.style.left = `${event.clientX + 14}px`
+    tooltip.style.top = `${event.clientY + 14}px`
+    return
+  }
+  tooltip.style.display = 'none'
+})
+
+canvas.addEventListener('mouseleave', () => {
+  if (tooltip) tooltip.style.display = 'none'
 })
 
 canvas.addEventListener('click', (event) => {
+  if (tooltip) tooltip.style.display = 'none'
   const [ax, ay] = artPoint(event)
   // a pat wakes Palú: if he is resting, he gets up and goes on to whatever he does next
   if (onPalu(ax, ay)) {
