@@ -20,6 +20,7 @@ import {
   coffeeMachine,
   desk,
   foosball,
+  glyph,
   kitchen,
   lounger,
   lounge,
@@ -59,12 +60,18 @@ const LABEL_H = 5 // nameplate under each seat
 const AISLE = 7 // walkway below each row of desks
 const DESK_W = SEAT_W + 4 // one agent's desk
 const STOOL_W = 9 // one stool at the end of a desk
-const MAX_STOOLS = 3 // beyond this a desk shows +N
+const MAX_STOOLS = 3 // beyond this the last stool carries a + marker
 const LINE_H = SEAT_H + LABEL_H + AISLE
 const TABLE_GAP = 6
 const MIN_ROOM_W = (DESK_W + STOOL_W + 1) * 2 + PAD * 2 + GLASS * 2
 const COMMON_H = 34
 const WALK_SPEED = 1.5 // art pixels per frame
+// Pixel scale, CSS pixels per art pixel. The office grows to the biggest scale at which the whole
+// building still fits the panel, so it fills a tall or wide panel instead of stopping at its own
+// height; it never drops below the width's minimum, so a crowded office scrolls as before.
+const MAX_SCALE = 8
+const MIN_ART_W = MIN_ROOM_W + (OUTER + MARGIN) * 2 // narrower than this and not even the smallest room fits
+const MAX_CORRIDOR = GAP * 4 // the corridors between rooms widen to reach the panel's bottom, up to this
 // States in which an agent leaves its desk for the coffee corner until the state ends.
 // 'monitoring' is a finished turn waiting on background tasks; add 'waiting' to also send
 // agents that wait for you.
@@ -95,12 +102,14 @@ const STATE_NOTE = {
   idle: '#9aa0b4'
 }
 
+const office = document.getElementById('office')
 const canvas = document.getElementById('plan')
 const ctx = canvas.getContext('2d')
+const dpr = () => window.devicePixelRatio || 1
 
 let snapshot = null
 let layout = { artW: 0, artH: 0, scale: 3, building: null, rooms: [], seats: [], common: null }
-let selected = null // seat key
+let selected = null // seat key, or a specialist's visitor key (`seat key|specialist id`)
 let tick = 0
 const lastState = new Map() // seat key -> state, to pop a bubble when it changes
 const bubbles = new Map() // seat key -> { text, until }
@@ -120,11 +129,9 @@ function since(ms) {
   return `${Math.round(m / 60)}h`
 }
 
-/** The short name on a seat's nameplate: the ticket key when there is one. */
-function shortName(desk) {
-  const key = desk.name.match(/[A-Z]{2,6}-\d+/)
-  if (key) return key[0]
-  return desk.name.split(/[\s/]+/)[0]
+/** What a seat's nameplate reads: the worker picks it from the conversation and workspace names. */
+function nameplate(seat) {
+  return seat.staff.label || seat.desk.name.split(/[\s/]+/)[0] || 'workspace'
 }
 
 /** Rich label for a seat: prefers ticket, issue #, clean tab name, then branch. */
@@ -231,9 +238,11 @@ function planRoom(floor, innerW) {
   return { lines, tableW }
 }
 
-function computeLayout() {
-  const cssW = Math.max(180, document.getElementById('office').clientWidth)
-  const scale = cssW >= 300 ? 3 : 2
+/**
+ * The office at one scale. `corridor` is the floor between a room and whatever lies above or
+ * below it, another room or the commons band; fitLayout widens it to fill the panel.
+ */
+function computeLayout(cssW, scale, corridor = GAP) {
   const artW = Math.floor(cssW / scale)
   const floorW = artW - OUTER * 2 - MARGIN * 2
   const cols = Math.max(1, Math.floor((floorW + GAP) / (MIN_ROOM_W + GAP)))
@@ -259,12 +268,12 @@ function computeLayout() {
     const placed = list.map((plan) => {
       if (plan.wide) {
         const y = Math.max(...colY)
-        colY.fill(y + plan.h + GAP)
+        colY.fill(y + plan.h + corridor)
         return { plan, x: OUTER + MARGIN, y }
       }
       const col = colY.indexOf(Math.min(...colY))
       const at = { plan, x: OUTER + MARGIN + col * (roomW + GAP), y: colY[col] }
-      colY[col] += plan.h + GAP
+      colY[col] += plan.h + corridor
       return at
     })
     return { placed, bottom: Math.max(...colY) }
@@ -340,7 +349,7 @@ function computeLayout() {
     common.bowls = { x: common.lounge.x + 3, y: common.lounge.y + 19 }
   }
 
-  const bottom = pack(plans.slice(split), bandY + bandH + GAP)
+  const bottom = pack(plans.slice(split), bandY + bandH + corridor)
   const rooms = []
   const seats = []
   for (const { plan, x, y: ry } of [...top.placed, ...bottom.placed]) {
@@ -364,36 +373,71 @@ function computeLayout() {
     })
     rooms.push(room)
   }
-  const y = Math.max(bottom.bottom, bandY + bandH + GAP) - GAP + MARGIN
+  const y = Math.max(bottom.bottom, bandY + bandH + corridor) - corridor + MARGIN
   const building = { w: artW, h: y + OUTER, doorY }
   return { artW, artH: building.h, scale, building, rooms, seats, common }
 }
 
+/**
+ * Lays the office out at the biggest scale that fits the panel, then stretches the building to the
+ * panel's bottom edge: first by widening the corridors between rooms, then with floor above the
+ * bottom wall. Scales step by whole CSS pixels, or by whole device pixels on a display with an
+ * integer pixel ratio, so the art stays crisp.
+ */
+function fitLayout() {
+  // The box's exact size, floored: clientWidth and clientHeight round, and a canvas half a pixel
+  // taller than the box would summon a scrollbar.
+  const box = office.getBoundingClientRect()
+  const cssW = Math.max(180, Math.floor(box.width))
+  const cssH = Math.floor(box.height)
+  const perPx = Number.isInteger(dpr()) ? dpr() : 1 // scale steps per CSS pixel
+  const minScale = cssW >= 300 ? 3 : 2
+  // The building at this scale, stretched to the panel's bottom; null when it is too tall as it is.
+  const fill = (scale) => {
+    const rows = Math.floor(cssH / scale)
+    let fit = null
+    for (let corridor = GAP; corridor <= MAX_CORRIDOR; corridor++) {
+      const wider = computeLayout(cssW, scale, corridor)
+      if (wider.artH > rows) break
+      fit = wider
+    }
+    if (fit) fit.artH = fit.building.h = rows
+    return fit
+  }
+  for (let n = MAX_SCALE * perPx; n / perPx > minScale; n--) {
+    const scale = n / perPx
+    if (Math.floor(cssW / scale) < MIN_ART_W) continue
+    const filled = fill(scale)
+    if (filled) return filled
+  }
+  return fill(minScale) ?? computeLayout(cssW, minScale)
+}
+
 function resize() {
-  layout = computeLayout()
-  const dpr = window.devicePixelRatio || 1
-  const w = Math.round(layout.artW * layout.scale * dpr)
-  const h = Math.round(layout.artH * layout.scale * dpr)
-  // Only touch the size when it changes: assigning it clears the canvas.
+  layout = fitLayout()
+  const w = Math.round(layout.artW * layout.scale * dpr())
+  const h = Math.round(layout.artH * layout.scale * dpr())
+  // Only touch the backing size when it changes: assigning it clears the canvas. The CSS size
+  // comes from the device size, so it is exact at any pixel ratio.
   if (canvas.width !== w || canvas.height !== h) {
     canvas.width = w
     canvas.height = h
-    canvas.style.width = `${layout.artW * layout.scale}px`
-    canvas.style.height = `${layout.artH * layout.scale}px`
   }
+  canvas.style.width = `${w / dpr()}px`
+  canvas.style.height = `${h / dpr()}px`
   draw()
 }
 
 // ---- drawing ---------------------------------------------------------------------------------
 
 function artTransform() {
-  const k = layout.scale * (window.devicePixelRatio || 1)
+  const k = layout.scale * dpr()
   ctx.setTransform(k, 0, 0, k, 0, 0)
   ctx.imageSmoothingEnabled = false
 }
 
 function cssTransform() {
-  const d = window.devicePixelRatio || 1
+  const d = dpr()
   ctx.setTransform(d, 0, 0, d, 0, 0)
 }
 
@@ -749,7 +793,10 @@ function stepVisitors() {
         v.path.shift()
       }
     } else if (v.mode === 'in') v.mode = 'seated'
-    else if (v.mode === 'out') visitors.delete(key)
+    else if (v.mode === 'out') {
+      visitors.delete(key)
+      if (selected === key) selected = null
+    }
   }
 }
 
@@ -1126,7 +1173,17 @@ function drawText(text, cssX, cssY, maxW, color, { weight = 600, align = 'left',
   artTransform()
 }
 
-function drawBubble(seat, text) {
+/** Where a bubble points for this key: the person, wherever they are, or the desk. */
+function bubbleAnchor(key) {
+  const v = visitors.get(key)
+  if (v) return { x: v.x + 4, y: v.mode === 'seated' ? v.y + 2 : v.y - 1 }
+  const seat = layout.seats.find((u) => u.key === key)
+  if (!seat) return null
+  const w = walkers.get(seat.key)
+  return w ? { x: w.x + 4, y: w.y - 1 } : { x: seat.x + SEAT_W / 2, y: seat.y }
+}
+
+function drawBubble(anchor, text) {
   const s = layout.scale
   cssTransform()
   ctx.font = `500 12px ui-monospace, 'SF Mono', Menlo, monospace`
@@ -1135,10 +1192,10 @@ function drawBubble(seat, text) {
   while (label.length > 1 && ctx.measureText(label).width > maxW - 14) label = label.slice(0, -2) + '.'
   const w = Math.ceil(ctx.measureText(label).width) + 14
   const h = 20
-  const cx = (seat.x + SEAT_W / 2) * s
+  const cx = anchor.x * s
   let x = Math.round(cx - w / 2)
   x = Math.max(6, Math.min(x, layout.artW * s - w - 6))
-  const y = Math.max(4, Math.round(seat.y * s - h - 2))
+  const y = Math.max(4, Math.round(anchor.y * s - h - 2))
   ctx.fillStyle = '#e9fbef'
   ctx.strokeStyle = '#3a8f5c'
   ctx.lineWidth = 1.5
@@ -1167,51 +1224,57 @@ function draw() {
   // desks: people first, then the desk over their laps, then monitors and hands
   for (const seat of layout.seats) drawSeat(seat)
   for (const seat of layout.seats) desk(painter(ctx, seat.x - 2, seat.y), DESK_W)
-  for (const seat of layout.seats) workstation(painter(ctx, seat.x, seat.y), seat.staff, tick, walkers.has(seat.key))
+  for (const seat of layout.seats) workstation(painter(ctx, seat.x, seat.y), seat.staff, tick, walkers.has(seat.key), Boolean(seat.desk.environment))
   // stools at the end of each desk, then whoever is sitting on them
-  for (const seat of layout.seats) {
-    for (const at of seat.stools) stool(painter(ctx, at.x, at.y))
-    if (seat.overflow) {
-      const last = seat.stools[seat.stools.length - 1]
-      glyph(p, '+', last.x + 2, last.y - 13, C.white)
-    }
-  }
+  for (const seat of layout.seats) for (const at of seat.stools) stool(painter(ctx, at.x, at.y))
   for (const v of visitors.values()) {
     if (v.mode === 'seated') specialist(painter(ctx, Math.round(v.x) + 1, Math.round(v.y) + 2), v.spec, tick)
   }
+  // more specialists than stools: a + beside the last sitter's head, in the gap before the next desk
+  for (const seat of layout.seats) {
+    if (!seat.overflow) continue
+    const last = seat.stools[seat.stools.length - 1]
+    glyph(p, '+', last.x + 7, last.y - 10, C.white)
+  }
 
-  // people up and about, nearest the bottom drawn last
-  const walking = layout.seats.filter((seat) => walkers.has(seat.key) && !behind.has(seat.key))
-  walking.sort((a, b) => walkers.get(a.key).y - walkers.get(b.key).y)
-  for (const seat of walking) {
+  // people up and about, Palú and specialists on their way, nearest the bottom drawn last, so
+  // whoever stands in front covers whoever is behind. Callers in a booth go first, under its glass.
+  const scene = []
+  for (const seat of layout.seats) {
     const w = walkers.get(seat.key)
+    if (!w || behind.has(seat.key)) continue
     const at = painter(ctx, Math.round(w.x), Math.round(w.y))
     const kind = w.mode === 'away' ? w.activity?.kind : null
-    if (kind === 'lounge') lounger(at, seat.staff, tick, w.activity.pose)
-    else if (kind === 'booth') walker(at, seat.staff, tick, false, w.left, null, 'phone')
-    else if (kind === 'foosball') walker(at, seat.staff, tick, false, w.left, null, w.spot.back ? 'playBack' : 'play')
-    else walker(at, seat.staff, tick, w.path.length > 0, w.left)
+    let paint
+    if (kind === 'lounge') paint = () => lounger(at, seat.staff, tick, w.activity.pose)
+    else if (kind === 'booth') paint = () => walker(at, seat.staff, tick, false, w.left, null, 'phone')
+    else if (kind === 'foosball') paint = () => walker(at, seat.staff, tick, false, w.left, null, w.spot.back ? 'playBack' : 'play')
+    else paint = () => walker(at, seat.staff, tick, w.path.length > 0, w.left)
+    scene.push({ base: Math.round(w.y) + 15, inBooth: kind === 'booth', paint })
   }
+  for (const [key, v] of visitors) {
+    if (v.mode === 'seated' || v.wait > 0 || behind.has(key)) continue
+    const at = painter(ctx, Math.round(v.x), Math.round(v.y))
+    scene.push({ base: Math.round(v.y) + 15, paint: () => walker(at, v.spec, tick, true, v.left, roleColor(v.spec.role)) })
+  }
+  const dog = behind.has('palu') ? null : paluBox()
+  // on a tie Palú goes first: he is low to the ground, so the person's legs cover him
+  if (dog) scene.push({ base: dog.base - 0.5, paint: drawPalu })
+  scene.sort((a, b) => a.base - b.base)
+  for (const it of scene) if (it.inBooth) it.paint()
   if (layout.common) for (const b of layout.common.booths) boothGlass(painter(ctx, b.bx, b.by))
-  if (!behind.has('palu')) drawPalu()
-  const moving = [...visitors]
-    .filter(([key, v]) => v.mode !== 'seated' && !(v.wait > 0) && !behind.has(key))
-    .map(([, v]) => v)
-    .sort((a, b) => a.y - b.y)
-  for (const v of moving) {
-    walker(painter(ctx, Math.round(v.x), Math.round(v.y)), v.spec, tick, true, v.left, roleColor(v.spec.role))
-  }
+  for (const it of scene) if (!it.inBooth) it.paint()
 
   const s = layout.scale
   for (const room of layout.rooms) {
     drawText(room.name, (room.x + 5) * s, (room.y + 6.5) * s, (Math.min(room.w - 40, 56) - 4) * s, C.white, { weight: 700 })
   }
   for (const seat of layout.seats) {
-    const color = seat.key === selected ? '#2a1f6b' : '#2a2633'
+    const color = seat === seatOf(selected) ? '#2a1f6b' : '#2a2633'
     drawText(seatLabel(seat), (seat.x + SEAT_W / 2) * s, (seat.y + SEAT_H + 2.5) * s, (DESK_W + 2) * s, color, { align: 'center', size: 10 })
   }
 
-  const pickSeat = layout.seats.find((u) => u.key === selected)
+  const pickSeat = selected && seatOf(selected)
   if (pickSeat) {
     artTransform()
     ctx.strokeStyle = '#ffffff'
@@ -1222,9 +1285,10 @@ function draw() {
   const now = Date.now()
   for (const seat of layout.seats) {
     const b = bubbles.get(seat.key)
-    if (seat.key === selected) drawBubble(seat, seat.staff.said ?? STATE_LABEL[seat.staff.state])
-    else if (b && b.until > now) drawBubble(seat, b.text)
+    if (seat.key !== selected && b && b.until > now) drawBubble(bubbleAnchor(seat.key), b.text)
   }
+  const anchor = selected && bubbleAnchor(selected)
+  if (anchor) drawBubble(anchor, sayingOf(selected))
 }
 
 // ---- side text ---------------------------------------------------------------------------------
@@ -1260,22 +1324,37 @@ async function requestSnapshot() {
   return await res.json()
 }
 
-function requestSwitch(paneKey) {
-  if (!paneKey) return
-  if (typeof orca !== 'undefined' && orca?.plugin?.request) {
-    orca.plugin.request('office.switch', { paneKey }).catch(() => {})
-  } else {
-    fetch('/api/switch', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ paneKey })
-    }).catch(() => {})
+// How the last "Open in Orca" went for the selected seat: 'opening', or the reason it failed.
+// Kept across polls (renderDetail runs on each) and dropped when the selection changes.
+let opening = null
+
+/** Asks the worker to bring the agent's tab to the front; the panel itself never moves Orca's focus. */
+async function openInOrca(seat) {
+  opening = { key: seat.key, text: null, busy: true }
+  renderDetail()
+  let outcome
+  try {
+    if (typeof orca !== 'undefined' && orca?.plugin?.request) {
+      outcome = await orca.plugin.request('office.switch', { paneKey: seat.staff.id, environment: seat.desk.environment ?? null }, { timeoutMs: 20000 })
+    } else {
+      const res = await fetch('/api/switch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ paneKey: seat.staff.id })
+      })
+      outcome = await res.json()
+    }
+  } catch (error) {
+    outcome = { ok: false, error: error?.message ?? String(error) }
   }
+  if (opening?.key !== seat.key) return
+  opening = outcome.ok ? null : { key: seat.key, text: `Could not open it in Orca: ${outcome.error}`, busy: false }
+  renderDetail()
 }
 
 function renderDetail() {
   const box = document.getElementById('detail')
-  const seat = layout.seats.find((u) => u.key === selected)
+  const seat = selected && seatOf(selected)
   if (!seat) {
     box.hidden = true
     return
@@ -1289,7 +1368,8 @@ function renderDetail() {
   header.style.marginBottom = '4px'
 
   const lines = [header]
-  lines.push(el('div', 'row', `📁 ${room.name} · 🌿 ${d.branch ?? d.name}`))
+  if (d.host) lines.push(el('div', 'row', `🌐 on ${d.host}`))
+  if (room) lines.push(el('div', 'row', `📁 ${room.name} · 🌿 ${d.branch ?? d.name}`))
   lines.push(el('div', 'row', `🤖 ${staff.agent ?? 'agent'} · ${STATE_LABEL[staff.state]} for ${since(staff.since)}`))
   if (staff.tool && staff.state === 'working') lines.push(el('div', 'row', `⚡ using ${staff.tool}`))
   if (staff.task && staff.task !== staff.name) lines.push(el('div', 'row', `📋 ${staff.task}`))
@@ -1298,13 +1378,18 @@ function renderDetail() {
     lines.push(el('div', 'row', `👥 ${sp.role ?? 'specialist'}: ${sp.task ?? ''} (${STATE_LABEL[sp.state]})`))
   }
   if (staff.id) {
-    const btn = el('button', 'switch-btn', '↗ Abrir pestaña en Orca')
-    btn.style.cssText = 'margin-top:8px;padding:4px 10px;background:var(--orca-button-background,#3a3650);color:var(--orca-button-foreground,#fff);border:1px solid var(--orca-muted,#555);border-radius:4px;cursor:pointer;font-family:inherit;font-size:11px;font-weight:600;'
-    btn.onclick = (e) => {
+    const state = opening?.key === seat.key ? opening : null
+    const button = el('button', 'open', state?.busy ? 'Abriendo...' : '↗ Abrir pestaña en Orca')
+    button.type = 'button'
+    button.disabled = Boolean(state?.busy)
+    button.addEventListener('click', (e) => {
       e.stopPropagation()
-      requestSwitch(staff.id)
-    }
-    lines.push(btn)
+      openInOrca(seat)
+    })
+    const actions = el('div', 'actions')
+    actions.append(button)
+    if (state?.text) actions.append(el('span', 'note', state.text))
+    lines.push(actions)
   }
   box.replaceChildren(...lines)
   box.hidden = false
@@ -1358,6 +1443,40 @@ function onPalu(ax, ay) {
   return Boolean(dog) && overlaps(dog.box, [ax - 1, ay - 1, 2, 2])
 }
 
+/** The seat a key belongs to: its own, or the desk a specialist is visiting. */
+function seatOf(key) {
+  const seatKey = visitors.has(key) ? key.slice(0, key.lastIndexOf('|')) : key
+  return layout.seats.find((u) => u.key === seatKey) ?? null
+}
+
+/** What someone says when clicked: an agent's line, or the job a specialist was called in for. */
+function sayingOf(key) {
+  const v = visitors.get(key)
+  if (v) return v.spec.task ?? `${v.spec.role ?? 'specialist'}, on it`
+  const staff = seatOf(key)?.staff
+  return staff ? staff.line ?? staff.said ?? STATE_LABEL[staff.state] : ''
+}
+
+/** Who is under the point: a person first, wherever they are, then a desk. */
+function whoAt(ax, ay) {
+  const inBox = ([x, y, w, h]) => ax >= x && ax < x + w && ay >= y && ay < y + h
+  const people = []
+  for (const [key, v] of visitors) {
+    if (v.wait > 0) continue
+    const box = v.mode === 'seated' ? [v.x, v.y + 1, 9, 13] : [v.x - 1, v.y - 2, 10, 18]
+    people.push({ key, box, base: box[1] + box[3] })
+  }
+  for (const seat of layout.seats) {
+    const w = walkers.get(seat.key)
+    // a lounger lies across the sofa, so give the box room on both sides
+    if (w) people.push({ key: seat.key, box: [w.x - 3, w.y - 2, 14, 18], base: w.y + 16 })
+  }
+  // the one drawn last (nearest the bottom) is on top
+  const person = people.sort((a, b) => b.base - a.base).find((m) => inBox(m.box))
+  if (person) return person.key
+  return layout.seats.find((u) => inBox([u.x, u.y, SEAT_W, SEAT_H + LABEL_H]))?.key ?? null
+}
+
 // Floating hover tooltip for seats and Palú
 const tooltip = document.createElement('div')
 tooltip.id = 'seat-tooltip'
@@ -1370,15 +1489,17 @@ function escapeHtml(s) {
 
 canvas.addEventListener('mousemove', (event) => {
   const [ax, ay] = artPoint(event)
-  const hit = layout.seats.find((u) => ax >= u.x && ax < u.x + SEAT_W && ay >= u.y && ay < u.y + SEAT_H + LABEL_H)
+  const targetKey = whoAt(ax, ay)
   const onDog = onPalu(ax, ay)
-  canvas.style.cursor = hit || onDog ? 'pointer' : ''
+  canvas.style.cursor = targetKey || onDog ? 'pointer' : ''
 
+  const hit = targetKey && seatOf(targetKey)
   if (hit) {
     const { desk: d, staff, room } = hit
     const title = staff.name || d.name
     const stateInfo = `🤖 <strong>${escapeHtml(staff.agent || 'agent')}</strong> · <span style="color:var(--orca-primary,#82aaff)">${escapeHtml(STATE_LABEL[staff.state])}</span> (${since(staff.since)})`
-    const locInfo = `📁 ${escapeHtml(room.name)} · 🌿 ${escapeHtml(d.branch || d.name)}`
+    const hostInfo = d.host ? ` · 🌐 ${escapeHtml(d.host)}` : ''
+    const locInfo = `📁 ${escapeHtml(room?.name ?? '')} · 🌿 ${escapeHtml(d.branch || d.name)}${hostInfo}`
     const toolInfo = staff.tool && staff.state === 'working' ? `<br>⚡ using <code>${escapeHtml(staff.tool)}</code>` : ''
     const saidInfo = staff.said ? `<br>💬 <em>"${escapeHtml(staff.said)}"</em>` : ''
     const specInfo = staff.specialists?.length ? `<br>👥 ${escapeHtml(staff.specialists.map((s) => s.role).filter(Boolean).join(', '))}` : ''
@@ -1410,12 +1531,14 @@ canvas.addEventListener('click', (event) => {
     if (!palu.path.length) paluNext()
     return
   }
-  const hit = layout.seats.find((u) => ax >= u.x && ax < u.x + SEAT_W && ay >= u.y && ay < u.y + SEAT_H + LABEL_H)
-  selected = hit && hit.key !== selected ? hit.key : null
+  const hit = whoAt(ax, ay)
+  selected = hit && hit !== selected ? hit : null
+  if (opening && seatOf(selected)?.key !== opening.key) opening = null
   renderDetail()
   draw()
-  if (hit && hit.staff?.id) {
-    requestSwitch(hit.staff.id)
+  const seat = selected && seatOf(selected)
+  if (seat) {
+    openInOrca(seat)
   }
 })
 
@@ -1440,15 +1563,9 @@ setInterval(() => {
   draw()
 }, FRAME_MS)
 
-// The canvas sets the office's height, so react to width only, or every resize re-fires.
-let lastWidth = 0
-new ResizeObserver(([entry]) => {
-  const width = Math.round(entry.contentRect.width)
-  if (width === lastWidth) return
-  lastWidth = width
-  // Lay out on the next frame, outside the observer callback, so the resize cannot re-fire it.
-  requestAnimationFrame(resize)
-}).observe(document.getElementById('office'))
+// The office's box follows the panel, not the canvas, so a relayout cannot re-fire this. Lay out
+// on the next frame, outside the observer callback.
+new ResizeObserver(() => requestAnimationFrame(resize)).observe(office)
 
 showMessage('Opening the office...')
 poll()

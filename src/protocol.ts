@@ -20,6 +20,10 @@ export type Staff = {
   /** First line of the agent's last reply, for its speech bubble. */
   said: string | null
   state: StaffState
+  /** What the agent says when you click it: "I'm editing panel.js", "I'm watching CI run". */
+  line: string
+  /** The nameplate on its desk: a ticket key, an issue number or the first word of its title. */
+  label: string
   since: number
   specialists: Specialist[]
 }
@@ -29,6 +33,10 @@ export type Desk = {
   name: string
   branch: string | null
   parentId: string | null
+  /** The `--environment` selector of the paired Orca server it runs on; null on this machine. */
+  environment: string | null
+  /** That server's name, for the detail box; null on this machine. */
+  host: string | null
   staff: Staff[]
 }
 
@@ -40,11 +48,14 @@ export type OfficeSnapshot = {
   error: string | null
 }
 
+/** What came of "Open in Orca": the agent's terminal tab came up, or only its worktree could. */
+export type SwitchOutcome = { ok: true; via: 'terminal' | 'worktree' } | { ok: false; error: string }
+
 declare module 'orca' {
   interface PluginRequests {
     /** Every workspace with its agents and their subagents, grouped by project. */
     'office.snapshot': { output: OfficeSnapshot }
-    /** Switch to the terminal tab corresponding to a staff's paneKey. */
-    'office.switch': { input: { paneKey: string }; output: { ok: boolean } }
+    /** Brings an agent to the front in Orca: its terminal tab, or its worktree for a Chat UI session. */
+    'office.switch': { input: { paneKey: string; environment?: string | null }; output: SwitchOutcome }
   }
 }
