@@ -101,6 +101,8 @@ function toStaff(row) {
     tool: str(row.toolName),
     said: str(row.lastAssistantMessage)?.split('\n')[0]?.slice(0, 120) ?? null,
     state: staffState(row),
+    line: str(row.statusMessage) ?? (str(row.toolName) ? `using ${row.toolName}` : 'working'),
+    label: str(row.conversationName) ?? '',
     since: typeof row.stateStartedAt === 'number' ? row.stateStartedAt : 0,
     specialists
   }
@@ -121,6 +123,8 @@ function toSnapshot(raw, at) {
       name: str(w.displayName) ?? branch ?? 'workspace',
       branch,
       parentId: str(w.parentWorktreeId),
+      environment: null,
+      host: null,
       staff: agents.map(toStaff)
     }
     const list = floors.get(repo) ?? []
