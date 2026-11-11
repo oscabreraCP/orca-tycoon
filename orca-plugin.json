@@ -5,11 +5,11 @@
   "version": "0.2.0",
   "description": "Every agent on your Orca host as a little pixel worker in a tycoon-style office.",
   "author": {
-    "name": "Palu Labs",
-    "url": "https://github.com/palulabs"
+    "name": "Palu Labs (maintained by Cyberpuerta)",
+    "url": "https://github.com/cyberpuerta/orca-tycoon"
   },
-  "repository": "https://github.com/palulabs/orca-tycoon",
-  "homepage": "https://github.com/palulabs/orca-tycoon",
+  "repository": "https://github.com/cyberpuerta/orca-tycoon",
+  "homepage": "https://github.com/cyberpuerta/orca-tycoon",
   "icon": "docs/catalog/icon.png",
   "cover": {
     "path": "docs/catalog/cover.png",

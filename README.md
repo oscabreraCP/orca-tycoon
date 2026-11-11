@@ -18,8 +18,7 @@ In Orca, open **Settings → Plugins**, and install **Orca Tycoon** (`palulabs.o
 To run it from a clone or development folder instead:
 
 ```sh
-git clone https://github.com/palulabs/orca-tycoon.git ~/projects/orca-tycoon
-# Or from fork: git clone https://github.com/oscabreraCP/orca-tycoon.git ~/projects/orca-tycoon
+git clone https://github.com/cyberpuerta/orca-tycoon.git ~/projects/orca-tycoon
 cd ~/projects/orca-tycoon
 orca plugin dev load .        # prints an approval; re-run with the --approve flag it shows
 orca plugin open local.office-tycoon --panel office
@@ -114,11 +113,18 @@ up. Add `waiting` to `AWAY_STATES` if you'd like agents that wait for you to tak
 
 The screenshots in `docs/` show a made-up office, rendered from the real panel code.
 
+## Origin & Attribution
+
+This repository is maintained by Cyberpuerta and originates from [palulabs/orca-tycoon](https://github.com/palulabs/orca-tycoon) by [Palu Labs](https://github.com/palulabs). We gratefully credit and preserve the original work, design, and inspiration from Palu Labs.
+
 ## License
 
 [MIT](LICENSE)
 
 Orca Tycoon is a community plugin and is not affiliated with Orca or Stably.
+
+Original work Copyright (c) 2026 Palú Labs.
+Enhancements and maintenance by Cyberpuerta.
 
 Palú, the office dog, is named after the bichon who gave Palu Labs its name. In loving memory,
 2003 to 2018.
