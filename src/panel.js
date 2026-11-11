@@ -1,4 +1,4 @@
-// Orca Tycoon: every agent on this Orca host as a little pixel worker on one office floor, with
+// Office Tycoon: every agent on this Orca host as a little pixel worker on one office floor, with
 // Palú, the office dog, wandering among them.
 // Each project is an open area on the floor; every worktree in it is a seat at a shared desk, with a
 // worktree's children seated next to it. Subagents are specialists: they come in through the
