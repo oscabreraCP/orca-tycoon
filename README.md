@@ -1,10 +1,10 @@
-# Orca Tycoon
+# Office Tycoon for Orca
 
 Your coding agents, as tiny pixel staff in an office you can watch.
 
-![The Orca Tycoon office: five teams at their desks, specialists on stools beside their agents, and a commons band in the middle with the lounge, coffee corner, foosball table, calling booths and Palú asleep in his bed](docs/office.png)
+![The Office Tycoon office: five teams at their desks, specialists on stools beside their agents, and a commons band in the middle with the lounge, coffee corner, foosball table, calling booths and Palú asleep in his bed](docs/office.png)
 
-Orca Tycoon is a plugin for [Orca](https://github.com/stablyai/orca), the desktop app for running
+Office Tycoon is a plugin for [Orca](https://github.com/stablyai/orca), the desktop app for running
 many coding agents in parallel git worktrees. It draws every agent on your machine, its SSH targets and the
 Orca servers you paired, such as a cloud VM, as a little worker in an office, in the style of tycoon and office-sim games. You get a glance at who is busy,
 who needs you and who is done, without having to click through every workspace.
@@ -13,7 +13,7 @@ who needs you and who is done, without having to click through every workspace.
 
 Requires Orca 1.4.246 or newer.
 
-In Orca, open Settings, then Plugins, and install Orca Tycoon (`palulabs.office-tycoon`) from the
+In Orca, open Settings, then Plugins, and install Office Tycoon for Orca (`palulabs.office-tycoon`) from the
 plugin directory. To run it from a clone instead:
 
 ```sh
@@ -126,7 +126,7 @@ The screenshots in `docs/` show a made-up office, rendered from the real panel c
 
 [MIT](LICENSE)
 
-Orca Tycoon is a community plugin and is not affiliated with Orca or Stably.
+Office Tycoon for Orca is a community plugin and is not affiliated with Orca or Stably.
 
 Palú, the office dog, is named after the bichon who gave Palu Labs its name. In loving memory,
 2003 to 2018.
