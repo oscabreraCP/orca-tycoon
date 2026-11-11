@@ -105,6 +105,7 @@ const STATE_NOTE = {
 const office = document.getElementById('office')
 const canvas = document.getElementById('plan')
 const ctx = canvas.getContext('2d')
+const tooltip = document.getElementById('tooltip')
 const dpr = () => window.devicePixelRatio || 1
 
 let snapshot = null
@@ -1308,6 +1309,29 @@ async function openInOrca(seat) {
   renderDetail()
 }
 
+function stateLabel(state) {
+  return STATE_LABEL[state] ?? state ?? 'unknown'
+}
+
+/** An agent's state and how long it has been in it, when the worker knows. */
+function stateFor(staff) {
+  const label = stateLabel(staff.state)
+  const how = since(staff.since)
+  return how ? `${label} for ${how}` : label
+}
+
+/** What a seat's agent is up to, line by line: shared by the detail panel and the hover card. */
+function seatFacts(seat) {
+  const { desk: d, staff } = seat
+  const facts = [`${staff.agent ?? 'agent'} · ${stateFor(staff)}`]
+  if (staff.task && staff.task !== d.name) facts.push(staff.task)
+  if (staff.tool && staff.state === 'working') facts.push(`using ${staff.tool}`)
+  for (const sp of activeSpecialists(staff)) {
+    facts.push(`${sp.role ?? 'specialist'}: ${sp.task ?? ''} (${stateLabel(sp.state)})`)
+  }
+  return facts
+}
+
 function renderDetail() {
   const box = document.getElementById('detail')
   const seat = selected && seatOf(selected)
@@ -1318,12 +1342,7 @@ function renderDetail() {
   const { desk: d, staff } = seat
   const lines = [el('div', '', d.name)]
   if (d.host) lines.push(el('div', 'row', `on ${d.host}`))
-  lines.push(el('div', 'row', `${staff.agent ?? 'agent'} · ${STATE_LABEL[staff.state]} for ${since(staff.since)}`))
-  if (staff.task && staff.task !== d.name) lines.push(el('div', 'row', staff.task))
-  if (staff.tool && staff.state === 'working') lines.push(el('div', 'row', `using ${staff.tool}`))
-  for (const sp of activeSpecialists(staff)) {
-    lines.push(el('div', 'row', `${sp.role ?? 'specialist'}: ${sp.task ?? ''} (${STATE_LABEL[sp.state]})`))
-  }
+  for (const fact of seatFacts(seat)) lines.push(el('div', 'row', fact))
   if (staff.id) {
     const state = opening?.key === seat.key ? opening : null
     const button = el('button', 'open', state?.busy ? 'Opening...' : 'Open in Orca')
@@ -1369,6 +1388,7 @@ function apply(next) {
   noteChanges()
   renderStats()
   renderDetail()
+  refreshCard()
   if (layout.seats.length === 0) {
     showMessage(next.error ? `Could not read the agents: ${next.error}` : 'The office is empty. Start an agent and it gets a desk.')
   } else showMessage(null)
@@ -1421,12 +1441,84 @@ function whoAt(ax, ay) {
   return layout.seats.find((u) => inBox([u.x, u.y, SEAT_W, SEAT_H + LABEL_H]))?.key ?? null
 }
 
+// ---- hover card --------------------------------------------------------------------------------
+
+// Where the pointer is over the canvas, or null when it is outside. The card is refreshed from it on
+// every frame and every snapshot, so it follows someone who walks away and goes when a seat closes.
+let pointer = null
+let cardSig = null
+
+/** The hover card for whoever is under the pointer: a title and lines of text, or null. */
+function cardAt(ax, ay) {
+  const key = whoAt(ax, ay)
+  const visitor = key && visitors.get(key)
+  if (visitor) {
+    const { spec } = visitor
+    const host = seatOf(key)
+    const lines = [stateLabel(spec.state)]
+    if (spec.task) lines.push(spec.task)
+    if (host) lines.push(`helping ${nameplate(host)}`)
+    return { key, title: spec.role ?? 'specialist', lines }
+  }
+  const seat = key && seatOf(key)
+  if (seat) {
+    const { desk: d, staff } = seat
+    const where = [seat.room?.name, d.branch || d.name, d.host && `on ${d.host}`].filter(Boolean).join(' · ')
+    const lines = [where, ...seatFacts(seat)]
+    if (staff.said) lines.push(`"${staff.said}"`)
+    return { key, title: staff.name || staff.label || d.name, lines }
+  }
+  if (onPalu(ax, ay)) return { key: 'palu', title: 'Palú', lines: ['The office dog. A pat wakes him up.'] }
+  return null
+}
+
+function hideCard() {
+  if (tooltip) tooltip.style.display = 'none'
+  cardSig = null
+}
+
+function refreshCard() {
+  if (!tooltip) return
+  if (!pointer) return hideCard()
+  const card = cardAt(...pointer.art())
+  canvas.style.cursor = card ? 'pointer' : ''
+  if (!card) return hideCard()
+  const sig = JSON.stringify(card)
+  if (sig !== cardSig) {
+    cardSig = sig
+    const body = el('div', 'muted')
+    card.lines.forEach((line, i) => {
+      if (i) body.append(el('br'))
+      body.append(line)
+    })
+    tooltip.replaceChildren(el('div', 'title', card.title), body)
+    tooltip.style.display = 'block'
+  }
+  // clamp to the card's measured size so a tall or wide card stays inside the panel
+  const margin = 10
+  const x = Math.min(window.innerWidth - tooltip.offsetWidth - margin, pointer.x + 14)
+  const y = Math.min(window.innerHeight - tooltip.offsetHeight - margin, pointer.y + 14)
+  tooltip.style.left = `${Math.max(margin, x)}px`
+  tooltip.style.top = `${Math.max(margin, y)}px`
+}
+
 canvas.addEventListener('mousemove', (event) => {
-  const [ax, ay] = artPoint(event)
-  canvas.style.cursor = whoAt(ax, ay) || onPalu(ax, ay) ? 'pointer' : ''
+  // keep the client point: the art point is taken again on each refresh, as the canvas may scroll
+  const { clientX: x, clientY: y } = event
+  pointer = { x, y, art: () => artPoint({ clientX: x, clientY: y }) }
+  refreshCard()
+})
+
+canvas.addEventListener('mouseleave', () => {
+  pointer = null
+  canvas.style.cursor = ''
+  hideCard()
 })
 
 canvas.addEventListener('click', (event) => {
+  // the detail panel takes over from the card until the pointer moves again
+  pointer = null
+  hideCard()
   const [ax, ay] = artPoint(event)
   // a pat wakes Palú: if he is resting, he gets up and goes on to whatever he does next
   if (onPalu(ax, ay)) {
@@ -1459,6 +1551,7 @@ setInterval(() => {
   stepPalu()
   if (snapshot) scenePrimed = true
   draw()
+  refreshCard()
 }, FRAME_MS)
 
 // The office's box follows the panel, not the canvas, so a relayout cannot re-fire this. Lay out

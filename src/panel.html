@@ -93,6 +93,27 @@
       #detail .note {
         color: var(--orca-muted-foreground, #9a97a8);
       }
+      #tooltip {
+        position: fixed;
+        display: none;
+        pointer-events: none;
+        z-index: 1000;
+        padding: 6px 10px;
+        background: var(--orca-popover, #221f30);
+        color: var(--orca-popover-foreground, inherit);
+        border: 1px solid var(--orca-muted, #3a3650);
+        font-size: 11px;
+        line-height: 1.45;
+        max-width: 300px;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+      }
+      #tooltip .title {
+        font-weight: 700;
+        margin-bottom: 2px;
+      }
+      #tooltip .muted {
+        color: var(--orca-muted-foreground, #9a97a8);
+      }
       .empty,
       .error {
         color: var(--orca-muted-foreground, #9a97a8);
@@ -110,6 +131,7 @@
       <canvas id="plan"></canvas>
     </main>
     <section id="detail" hidden></section>
+    <div id="tooltip"></div>
     <script type="module" src="./panel.js"></script>
   </body>
 </html>
