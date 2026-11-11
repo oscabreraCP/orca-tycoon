@@ -243,9 +243,19 @@ function planRoom(floor, innerW) {
  * below it, another room or the commons band; fitLayout widens it to fill the panel.
  */
 function computeLayout(cssW, scale, corridor = GAP) {
-  const artW = Math.floor(cssW / scale)
-  const floorW = artW - OUTER * 2 - MARGIN * 2
-  const cols = Math.max(1, Math.floor((floorW + GAP) / (MIN_ROOM_W + GAP)))
+  const rawArtW = Math.floor(cssW / scale)
+  const rawFloorW = rawArtW - OUTER * 2 - MARGIN * 2
+  const floorList = snapshot?.floors ?? []
+  const teamCount = Math.max(1, floorList.length)
+  // Max columns: 1 column if 1 team, 2 columns for 2-4 teams, 3 columns only for 5+ teams
+  const maxCols = teamCount >= 5 ? 3 : Math.min(2, teamCount)
+  const cols = Math.max(1, Math.min(maxCols, Math.floor((rawFloorW + GAP) / (MIN_ROOM_W + GAP))))
+
+  // Cap floor width to prevent rooms and furniture stretching into empty soccer fields
+  const maxRoomW = 125
+  const maxFloorW = cols * maxRoomW + GAP * (cols - 1)
+  const floorW = Math.min(rawFloorW, Math.max(MIN_ROOM_W, maxFloorW))
+  const artW = floorW + OUTER * 2 + MARGIN * 2
   const roomW = Math.floor((floorW - GAP * (cols - 1)) / cols)
   const innerW = roomW - GLASS * 2 - PAD * 2
 
@@ -289,7 +299,20 @@ function computeLayout(cssW, scale, corridor = GAP) {
       split = k
     }
   }
-  const top = pack(plans.slice(0, split), OUTER + MARGIN)
+
+  // If top or bottom section only has 1 room in a multi-column floor, let it span wide so
+  // there are no huge empty columns beside it.
+  const topList = plans.slice(0, split)
+  const botList = plans.slice(split)
+  if (topList.length === 1 && cols > 1 && !topList[0].wide) {
+    const p = planRoom(topList[0].floor, fullInner)
+    topList[0] = { ...topList[0], ...p, w: floorW, inner: fullInner, wide: true, h: TOP + p.lines.length * LINE_H + PAD }
+  }
+  if (botList.length === 1 && cols > 1 && !botList[0].wide) {
+    const p = planRoom(botList[0].floor, fullInner)
+    botList[0] = { ...botList[0], ...p, w: floorW, inner: fullInner, wide: true, h: TOP + p.lines.length * LINE_H + PAD }
+  }
+  const top = pack(topList, OUTER + MARGIN)
 
   // The commons band across the middle: lounge, coffee corner (water dispenser, coffee machine)
   // and kitchen. Wide floors put them side by side; narrow ones stack the lounge above.
@@ -300,17 +323,18 @@ function computeLayout(cssW, scale, corridor = GAP) {
   const gamesY = bandY + COMMON_H * (rows - 1)
   const entry = 10 // a clear strip by the door
   const common = { x: OUTER + MARGIN, y: bandY, w: floorW, h: bandH }
-  const loungeW = wide ? Math.floor((floorW - GAP) / 2) - entry : floorW - entry
+  const loungeW = Math.min(72, wide ? Math.floor((floorW - GAP) / 2) - entry : floorW - entry)
   const cornerX = wide ? common.x + entry + loungeW + GAP : common.x + entry
   const cornerY = wide ? bandY : bandY + COMMON_H
   common.lounge = { x: common.x + entry, y: bandY + 4, w: loungeW }
   common.cooler = { x: cornerX + 2, y: cornerY + 2 }
   common.coffee = { x: cornerX + 12, y: cornerY + 4 }
-  common.kitchen = { x: cornerX + 24, y: cornerY + 6, w: Math.max(30, common.x + floorW - cornerX - 24) }
+  common.kitchen = { x: cornerX + 24, y: cornerY + 6, w: Math.min(48, Math.max(30, common.x + floorW - cornerX - 24)) }
   common.laneTop = bandY - 4
   common.laneBottom = bandY + bandH - 8
   common.spots = []
-  for (let sx = cornerX; sx + 8 <= common.x + floorW; sx += 9) common.spots.push({ x: sx, y: cornerY + 17, kind: 'coffee' })
+  const kitchenEnd = cornerX + 24 + common.kitchen.w
+  for (let sx = cornerX; sx + 8 <= Math.min(common.x + floorW, kitchenEnd + 8); sx += 9) common.spots.push({ x: sx, y: cornerY + 17, kind: 'coffee' })
   // the games row: a foosball table, and calling booths along the right
   const fx = common.x + entry + 12
   common.foosball = { x: fx, y: gamesY + 7 }
@@ -379,38 +403,25 @@ function computeLayout(cssW, scale, corridor = GAP) {
 }
 
 /**
- * Lays the office out at the biggest scale that fits the panel, then stretches the building to the
- * panel's bottom edge: first by widening the corridors between rooms, then with floor above the
- * bottom wall. Scales step by whole CSS pixels, or by whole device pixels on a display with an
- * integer pixel ratio, so the art stays crisp.
+ * Lays the office out at the biggest crisp pixel scale that fits naturally inside the panel.
+ * Keeps corridors tight (GAP) and height natural, avoiding stretched empty floorboards.
  */
 function fitLayout() {
-  // The box's exact size, floored: clientWidth and clientHeight round, and a canvas half a pixel
-  // taller than the box would summon a scrollbar.
   const box = office.getBoundingClientRect()
   const cssW = Math.max(180, Math.floor(box.width))
-  const cssH = Math.floor(box.height)
+  const cssH = Math.max(120, Math.floor(box.height))
   const perPx = Number.isInteger(dpr()) ? dpr() : 1 // scale steps per CSS pixel
   const minScale = cssW >= 300 ? 3 : 2
-  // The building at this scale, stretched to the panel's bottom; null when it is too tall as it is.
-  const fill = (scale) => {
-    const rows = Math.floor(cssH / scale)
-    let fit = null
-    for (let corridor = GAP; corridor <= MAX_CORRIDOR; corridor++) {
-      const wider = computeLayout(cssW, scale, corridor)
-      if (wider.artH > rows) break
-      fit = wider
-    }
-    if (fit) fit.artH = fit.building.h = rows
-    return fit
-  }
-  for (let n = MAX_SCALE * perPx; n / perPx > minScale; n--) {
+
+  for (let n = MAX_SCALE * perPx; n / perPx >= minScale; n--) {
     const scale = n / perPx
     if (Math.floor(cssW / scale) < MIN_ART_W) continue
-    const filled = fill(scale)
-    if (filled) return filled
+    const candidate = computeLayout(cssW, scale, GAP)
+    if (candidate.artH * scale <= cssH && candidate.artW * scale <= cssW) {
+      return candidate
+    }
   }
-  return fill(minScale) ?? computeLayout(cssW, minScale)
+  return computeLayout(cssW, minScale, GAP)
 }
 
 function resize() {
