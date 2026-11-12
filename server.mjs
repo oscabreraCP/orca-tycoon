@@ -21,7 +21,7 @@ function runPs() {
   return new Promise((resolve, reject) => {
     execFile(
       cliPath(),
-      ['worktree', 'ps', '--json'],
+      ['worktree', 'ps', '--agent-wait', '--json'],
       { timeout: 8000, maxBuffer: 32 * 1024 * 1024 },
       (error, stdout) => {
         if (error && !stdout) return reject(error)
@@ -72,8 +72,17 @@ function switchTerminal(paneKey) {
 const str = (v) => (typeof v === 'string' && v.trim() ? v.trim() : null)
 
 function staffState(row) {
+  if (row.agentWait != null && (typeof row.agentWait !== 'object' || Object.keys(row.agentWait).length > 0)) {
+    return 'waiting'
+  }
   const state = row.state
-  if (state === 'working') return row.workingMode === 'monitoring' ? 'monitoring' : 'working'
+  if (state === 'working') {
+    if (row.workingMode !== 'monitoring' && row.programStatus && typeof row.programStatus === 'object') {
+      const prog = row.programStatus.state
+      if (prog && prog !== 'working') return prog === 'done' ? 'done' : 'idle'
+    }
+    return row.workingMode === 'monitoring' ? 'monitoring' : 'working'
+  }
   if (state === 'waiting' || state === 'blocked' || state === 'done') return state
   return 'idle'
 }
@@ -85,6 +94,35 @@ function specialistState(state) {
   return 'idle'
 }
 
+const LEADER_NAME_PATTERNS = [
+  /\borch:\d+.*?\blead\b/i,
+  /\b(?:team[- ]?lead|tech[- ]?lead|lead[- ]?agent|coordinator|coordinador|orchestrator|supervisor)\b/i,
+  /(?:^|[:\-\/|•·])\s*lead\s+[^a-z]*(?:[A-Z0-9]|$)/i
+]
+
+const LEADER_PROMPT_PATTERNS = [
+  /\borca\s+orchestration\b/i,
+  /\borchestration\s+check\b/i,
+  /^\s*\/orchestrate\b/i
+]
+
+function isLeaderStaff(row) {
+  const name = str(row.conversationName) ?? str(row.displayName) ?? str(row.taskTitle) ?? ''
+  const prompt = str(row.prompt) ?? ''
+  const title = str(row.taskTitle) ?? ''
+  const activityTitle = str(row.activity?.title) ?? ''
+
+  if (LEADER_NAME_PATTERNS.some((p) => p.test(name) || p.test(title) || p.test(activityTitle))) {
+    return true
+  }
+
+  if (LEADER_PROMPT_PATTERNS.some((p) => p.test(prompt))) {
+    return true
+  }
+
+  return false
+}
+
 function toStaff(row) {
   const subs = Array.isArray(row.subagents) ? row.subagents : []
   const specialists = subs.map((s) => ({
@@ -93,6 +131,7 @@ function toStaff(row) {
     task: str(s.description),
     state: specialistState(s.state)
   }))
+  const isLeader = isLeaderStaff(row)
   return {
     id: String(row.paneKey ?? ''),
     agent: str(row.agentType),
@@ -101,10 +140,11 @@ function toStaff(row) {
     tool: str(row.toolName),
     said: str(row.lastAssistantMessage)?.split('\n')[0]?.slice(0, 120) ?? null,
     state: staffState(row),
-    line: str(row.statusMessage) ?? (str(row.toolName) ? `using ${row.toolName}` : 'working'),
+    line: isLeader ? 'Coordinating workers' : (str(row.statusMessage) ?? (str(row.toolName) ? `using ${row.toolName}` : 'working')),
     label: str(row.conversationName) ?? '',
     since: typeof row.stateStartedAt === 'number' ? row.stateStartedAt : 0,
-    specialists
+    specialists,
+    isLeader
   }
 }
 

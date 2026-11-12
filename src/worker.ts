@@ -78,11 +78,11 @@ export async function readAllHosts(
   run: (args: string[], timeout?: number) => Promise<unknown>,
   onServerError: (environment: string, error: unknown) => void = () => {}
 ): Promise<{ local: unknown; servers: ServerAnswer[] }> {
-  const local = await run(['worktree', 'ps', '--json'])
+  const local = await run(['worktree', 'ps', '--agent-wait', '--json'])
   const answers = await Promise.all(
     pairedEnvironments(local).map(async (environment) => {
       try {
-        return { environment, raw: await run(['worktree', 'ps', '--json', '--environment', environment], SERVER_TIMEOUT_MS) }
+        return { environment, raw: await run(['worktree', 'ps', '--agent-wait', '--json', '--environment', environment], SERVER_TIMEOUT_MS) }
       } catch (error) {
         onServerError(environment, error)
         return null
@@ -93,8 +93,17 @@ export async function readAllHosts(
 }
 
 export function staffState(row: Row): StaffState {
+  if (row.agentWait != null && (typeof row.agentWait !== 'object' || Object.keys(row.agentWait).length > 0)) {
+    return 'waiting'
+  }
   const state = row.state
-  if (state === 'working') return row.workingMode === 'monitoring' ? 'monitoring' : 'working'
+  if (state === 'working') {
+    if (row.workingMode !== 'monitoring' && row.programStatus && typeof row.programStatus === 'object') {
+      const prog = (row.programStatus as Row).state
+      if (prog && prog !== 'working') return prog === 'done' ? 'done' : 'idle'
+    }
+    return row.workingMode === 'monitoring' ? 'monitoring' : 'working'
+  }
   if (state === 'waiting' || state === 'blocked' || state === 'done') return state
   return 'idle'
 }
@@ -224,20 +233,64 @@ function toolLine(tool: string, input: string | null): string {
   return "I'm working on it"
 }
 
+const LEADER_NAME_PATTERNS = [
+  /\borch:\d+.*?\blead\b/i,
+  /\b(?:team[- ]?lead|tech[- ]?lead|lead[- ]?agent|coordinator|coordinador|orchestrator|supervisor)\b/i,
+  /(?:^|[:\-\/|•·])\s*lead\s+[^a-z]*(?:[A-Z0-9]|$)/i
+]
+
+const LEADER_PROMPT_PATTERNS = [
+  /\borca\s+orchestration\b/i,
+  /\borchestration\s+check\b/i,
+  /^\s*\/orchestrate\b/i
+]
+
+/** True when an agent is leading or coordinating an orchestration / multi-agent run. */
+export function isLeaderStaff(row: Row, deskName: string): boolean {
+  const name = str(row.conversationName) ?? str(row.displayName) ?? str(row.taskTitle) ?? ''
+  const title = str(row.taskTitle) ?? ''
+  const activityTitle = str((row.activity as Row | null)?.title) ?? ''
+  const prompt = str(row.prompt) ?? ''
+
+  if (LEADER_NAME_PATTERNS.some((p) => p.test(name) || p.test(title) || p.test(activityTitle) || p.test(deskName))) {
+    return true
+  }
+
+  if (LEADER_PROMPT_PATTERNS.some((p) => p.test(prompt))) {
+    return true
+  }
+
+  return false
+}
+
 /** The one line an agent says when you click it. */
-export function lineOf(row: Row, state: StaffState, specialists: Specialist[]): string {
+export function lineOf(row: Row, state: StaffState, specialists: Specialist[], isLeader = false): string {
   const busy = specialists.filter((s) => s.state !== 'done' && s.state !== 'idle')
-  if (state === 'waiting') return /ask/i.test(String(row.toolName ?? '')) ? 'I have a question for you' : 'I need you to look'
+  if (state === 'waiting') {
+    const prompt = str(row.agentWaitPrompt) ?? str((row.agentWait as Row)?.prompt) ?? str((row.agentWait as Row)?.message)
+    if (prompt) return prompt
+    return /ask/i.test(String(row.toolName ?? '')) ? 'I have a question for you' : 'I need your input'
+  }
   if (state === 'blocked') return "I'm stuck, can you help?"
   if (state === 'done') return str(row.lastAssistantMessage)?.split('\n')[0]?.slice(0, 120) ?? 'All done!'
-  if (state === 'idle') return "I'm free"
+  if (state === 'idle') {
+    return isLeader ? "I'm coordinating: standing by for workers" : "I'm free"
+  }
   const tool = str(row.toolName)
   // a specialist's turn: the agent is monitoring, or sits on the Agent call that launched it
   const handedOff = state === 'monitoring' || !tool || /^(?:agent|task)$/i.test(tool)
+  if (isLeader) {
+    if (handedOff && busy.length === 1) return `I'm coordinating: waiting on the ${clip(busy[0].role ?? 'specialist', 18)}`
+    if (handedOff && busy.length > 1) return `I'm coordinating: waiting on ${busy.length} specialists`
+    if (state === 'monitoring') return "I'm coordinating: waiting on workers and CI"
+    if (tool && /^(?:bash|run_command|shell)$/i.test(tool) && /orchestration/i.test(str(row.toolInput) ?? '')) {
+      return "I'm coordinating: checking on workers"
+    }
+  }
   if (handedOff && busy.length === 1) return `I'm waiting on the ${clip(busy[0].role ?? 'specialist', 18)}`
   if (handedOff && busy.length > 1) return `I'm waiting on ${busy.length} specialists`
   if (state === 'monitoring') return "I'm waiting on a background job"
-  return tool ? toolLine(tool, str(row.toolInput)) : "I'm thinking"
+  return tool ? toolLine(tool, str(row.toolInput)) : (isLeader ? "I'm coordinating" : "I'm thinking")
 }
 
 // ---- the nameplate on a desk --------------------------------------------------------------------
@@ -285,6 +338,7 @@ export function labelOf(name: string | null, deskName: string, generic = isGener
 
 function toStaff(row: Row, deskName: string, generic: boolean): Staff {
   const specialists = specialistsOf(row)
+  const isLeader = isLeaderStaff(row, deskName)
   return {
     id: String(row.paneKey ?? ''),
     agent: str(row.agentType),
@@ -294,9 +348,10 @@ function toStaff(row: Row, deskName: string, generic: boolean): Staff {
     tool: str(row.toolName),
     said: str(row.lastAssistantMessage)?.split('\n')[0]?.slice(0, 120) ?? null,
     state: staffState(row),
-    line: lineOf(row, staffState(row), specialists),
+    line: lineOf(row, staffState(row), specialists, isLeader),
     since: typeof row.stateStartedAt === 'number' ? row.stateStartedAt : 0,
-    specialists
+    specialists,
+    isLeader
   }
 }
 

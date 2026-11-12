@@ -89,6 +89,24 @@ export function desk(p, w) {
   p(w - 3, 20, 2, 2, C.woodDark)
 }
 
+export const GOLD = '#f6b23c'
+export const GOLD_LIGHT = '#ffd166'
+export const GOLD_DARK = '#c47d16'
+export const RUBY = '#ff5468'
+
+/** Crown for a leader / coordinator, 6 art pixels wide, resting on their head. */
+export function crown(p, x, y) {
+  // Peaks: center peak taller (y - 2), left and right peaks (y - 1)
+  p(x, y - 1, 1, 1, GOLD_LIGHT)
+  p(x + 2, y - 2, 2, 2, GOLD_LIGHT)
+  p(x + 5, y - 1, 1, 1, GOLD_LIGHT)
+  // Crown body
+  p(x, y, 6, 1, GOLD)
+  // Base band with ruby gem in center
+  p(x, y + 1, 6, 1, GOLD_DARK)
+  p(x + 2, y + 1, 2, 1, RUBY)
+}
+
 /** Chair and person, drawn before the desk so the desk hides their lap. */
 export function person(p, staff, t, away = false) {
   const { skin, hair, shirt } = look(staff.id || 'x')
@@ -106,6 +124,9 @@ export function person(p, staff, t, away = false) {
   p(7, 1 + dy - bob, 6, 2, hair)
   p(6, 2 + dy - bob, 1, 3, hair)
   p(13, 2 + dy - bob, 1, 3, hair)
+  if (staff.isLeader) {
+    crown(p, 7, dy - bob)
+  }
   if (sleepy) {
     p(8, 5 + dy, 1, 1, C.ink)
     p(11, 5 + dy, 1, 1, C.ink)
@@ -167,8 +188,15 @@ export function workstation(p, staff, t, away = false, remote = false) {
   }
   // overhead marks
   if ((s === 'done' || s === 'idle') && !away) {
-    const z = t % 16
-    if (z < 12) glyph(p, 'z', 14 + (z >> 2), 2 - (z >> 2), C.white)
+    if (!staff.isLeader || s === 'done') {
+      const z = t % 16
+      if (z < 12) glyph(p, 'z', 14 + (z >> 2), 2 - (z >> 2), C.white)
+    }
+  } else if (s === 'waiting' && !away) {
+    const bob = (t >> 2) % 2
+    const qx = staff.isLeader ? 14 : 9
+    const qy = staff.isLeader ? 0 : -3
+    glyph(p, '?', qx, qy + bob, GOLD_LIGHT)
   }
 }
 
@@ -261,6 +289,9 @@ export function lounger(p, staff, t, pose = 'nap') {
   const slump = pose === 'nap' ? (t >> 3) % 2 : 0
   p(1, 1 + slump, 6, 2, hair)
   p(1, 3 + slump, 6, 3, skin)
+  if (staff.isLeader) {
+    crown(p, 1, slump)
+  }
   if (pose === 'nap') {
     p(2, 4 + slump, 1, 1, C.ink)
     p(5, 4 + slump, 1, 1, C.ink)
@@ -357,6 +388,9 @@ export function walker(p, staff, t, moving, left, badge = null, pose = 'mug') {
   p(1, 2 - bob, 6, 4, pose === 'playBack' ? hair : skin)
   p(0, 2 - bob, 1, 2, hair)
   p(7, 2 - bob, 1, 2, hair)
+  if (staff.isLeader) {
+    crown(p, 1, -1 - bob)
+  }
   if (t % 30 !== 0 && pose !== 'playBack') {
     p(left ? 2 : 3, 3 - bob, 1, 2, C.ink)
     p(left ? 4 : 5, 3 - bob, 1, 2, C.ink)

@@ -26,8 +26,10 @@ orca plugin open local.office-tycoon --panel office
 
 ### Features & Improvements:
 - **Smart Desk Labels:** Shows ticket keys (`IT-XXXXX`, `#19977`) or clean tab conversation names under each desk instead of repeating generic branch names.
+- **Leader / Coordinator Identification:** Leaders wear a golden crown 👑 pixel sprite, have a `👑` plate badge, custom dialog lines ("Coordinating: waiting on workers"), and are barred from sofa naps during orchestration.
+- **Go to Leader Button (`[ 👑 Ir a líder ]`):** When viewing any worker belonging to an orchestration run or project, easily navigate directly to its coordinator desk.
 - **Hover Card Tooltip:** Hovering over any desk displays a floating card with full tab name, active agent, state, duration, tool (`Bash`, etc.), repo, branch, subagents, and last message preview.
-- **Click to Switch Tab:** Clicking any desk directly focuses/switches to that terminal tab in Orca (`orca terminal switch`). Also adds an `[ ↗ Abrir pestaña en Orca ]` button in the details panel.
+- **Safe Selection & Double-Click to Switch:** Single click selects the desk and opens details without switching tabs in Orca. Double-clicking any desk (or clicking `[ ↗ Abrir pestaña en Orca ]` in details) switches to that terminal tab.
 - **Standalone Local Server (Optional):** Run `node server.mjs` to view Tycoon at `http://localhost:3456` or in an Orca browser tab (`orca tab create --url http://127.0.0.1:3456`).
 
 The worker looks for the Orca CLI at `/Applications/Orca.app/Contents/Resources/bin/orca`, then
