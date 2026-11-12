@@ -41,6 +41,10 @@ export function cliCandidates(options: CliLookupEnv = {}): string[] {
   }
 
   push(env.ORCA_CLI_COMMAND)
+  if (env.ORCA_CLI_BIN_DIR?.trim()) {
+    const binDir = env.ORCA_CLI_BIN_DIR.trim().replace(/[\\/]+$/, '')
+    push(platform === 'win32' ? `${binDir}\\orca.exe` : `${binDir}/orca`)
+  }
 
   if (resourcesPath) {
     if (platform === 'win32') {
@@ -71,9 +75,16 @@ export function cliCandidates(options: CliLookupEnv = {}): string[] {
       push(`${base}\\orca\\bin\\orca.cmd`)
     }
   } else if (platform === 'linux') {
-    push('/usr/local/bin/orca')
+    // On Linux desktop, Orca installs its CLI as `orca-ide` because `/usr/bin/orca` is the GNOME screen reader.
+    if (env.HOME?.trim()) {
+      const home = env.HOME.trim().replace(/\/+$/, '')
+      push(`${home}/.config/Orca/linux-orca-cli-shim/orca`)
+      push(`${home}/.local/bin/orca-ide`)
+    }
+    push('/usr/local/bin/orca-ide')
     push('/usr/bin/orca-ide')
-    push('/usr/bin/orca')
+    push('/opt/Orca/resources/bin/orca-ide')
+    push('/usr/local/bin/orca')
   } else {
     push('/Applications/Orca.app/Contents/Resources/bin/orca')
     if (env.HOME?.trim()) {
@@ -93,6 +104,9 @@ export function resolveCliTarget(options: CliLookupEnv = {}): CliTarget {
   }
   if (platform === 'win32') {
     return { command: 'orca.exe', shell: false, fallbackCommand: 'orca.cmd' }
+  }
+  if (platform === 'linux') {
+    return { command: 'orca-ide', shell: false, fallbackCommand: 'orca' }
   }
   return { command: 'orca', shell: false }
 }

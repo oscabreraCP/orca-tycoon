@@ -17,12 +17,20 @@ In Orca, open **Settings → Plugins**, and install **Orca Tycoon** (`palulabs.o
 
 To run it from a clone or development folder instead:
 
-**macOS / Linux:**
+**macOS:**
 ```sh
 git clone https://github.com/cyberpuerta/orca-tycoon.git ~/projects/orca-tycoon
 cd ~/projects/orca-tycoon
 orca plugin dev load .        # prints an approval; re-run with the --approve flag it shows
 orca plugin open local.office-tycoon --panel office
+```
+
+**Linux** (outside an Orca terminal, the CLI is named `orca-ide` so it doesn't collide with GNOME's `/usr/bin/orca` screen reader):
+```sh
+git clone https://github.com/cyberpuerta/orca-tycoon.git ~/projects/orca-tycoon
+cd ~/projects/orca-tycoon
+orca-ide plugin dev load .    # prints an approval; re-run with the --approve flag it shows
+orca-ide plugin open local.office-tycoon --panel office
 ```
 
 **Windows (PowerShell):**

@@ -529,4 +529,22 @@ test('resolves the Orca CLI across macOS, Windows and Linux with safe shell hand
     }),
     { command: 'orca', shell: false }
   )
+
+  // Linux: prefers orca-ide (never /usr/bin/orca, which is the GNOME screen reader)
+  const linuxCandidates = cliCandidates({
+    platform: 'linux',
+    env: { HOME: '/home/dev' },
+    resourcesPath: null
+  })
+  assert.equal(linuxCandidates.includes('/usr/bin/orca'), false)
+  assert.equal(linuxCandidates.includes('/usr/bin/orca-ide'), true)
+  assert.deepEqual(
+    resolveCliTarget({
+      platform: 'linux',
+      env: { HOME: '/home/dev' },
+      resourcesPath: null,
+      exists: () => false
+    }),
+    { command: 'orca-ide', shell: false, fallbackCommand: 'orca' }
+  )
 })
