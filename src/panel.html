@@ -36,6 +36,23 @@
       .stats {
         color: var(--orca-muted-foreground, #9a97a8);
       }
+      .header-right {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .theme-select {
+        padding: 2px 6px;
+        background: var(--orca-popover, #221f30);
+        color: var(--orca-foreground, #e8e6f0);
+        border: 1px solid var(--orca-muted, #3a3650);
+        border-radius: 4px;
+        font: 11px/1.2 ui-monospace, 'SF Mono', Menlo, monospace;
+        cursor: pointer;
+      }
+      .theme-select:hover {
+        border-color: var(--orca-primary, #8e86ff);
+      }
       /* Takes whatever the header leaves; the office is laid out to fill it, and only an office
          too crowded to fit at the smallest scale scrolls. */
       #office {
@@ -124,7 +141,13 @@
   <body>
     <header>
       <h1>OFFICE TYCOON</h1>
-      <span class="stats" id="stats"></span>
+      <div class="header-right">
+        <span class="stats" id="stats"></span>
+        <select id="theme-select" class="theme-select" title="Select office theme">
+          <option value="christmas">🎄 Christmas</option>
+          <option value="normal">🏢 Normal</option>
+        </select>
+      </div>
     </header>
     <div class="empty" id="message" hidden></div>
     <main id="office">

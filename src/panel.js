@@ -17,10 +17,13 @@ import {
   bookshelf,
   booth,
   boothGlass,
+  christmasTree,
   coffeeMachine,
   desk,
   foosball,
+  getTheme,
   glyph,
+  holidayLights,
   kitchen,
   lounger,
   lounge,
@@ -28,6 +31,7 @@ import {
   person,
   pick,
   roleColor,
+  setTheme,
   specialist,
   stool,
   plant,
@@ -107,6 +111,19 @@ const canvas = document.getElementById('plan')
 const ctx = canvas.getContext('2d')
 const tooltip = document.getElementById('tooltip')
 const dpr = () => window.devicePixelRatio || 1
+
+const themeSelect = document.getElementById('theme-select')
+const savedTheme = localStorage.getItem('orca-tycoon-theme') || 'christmas'
+setTheme(savedTheme)
+if (themeSelect) {
+  themeSelect.value = getTheme()
+  themeSelect.addEventListener('change', (e) => {
+    const nextTheme = e.target.value
+    setTheme(nextTheme)
+    localStorage.setItem('orca-tycoon-theme', nextTheme)
+    draw()
+  })
+}
 
 let snapshot = null
 let layout = { artW: 0, artH: 0, scale: 3, building: null, rooms: [], seats: [], common: null }
@@ -428,14 +445,25 @@ function drawBuilding(p) {
   }
   // front door in the left wall, level with the commons band, with a doormat
   const dy = layout.building.doorY
+  const isXmas = getTheme() === 'christmas'
   p(0, dy - 2, OUTER, 19, FLOOR.plank)
   p(0, dy - 3, OUTER, 1, BRICK.dark)
   p(0, dy + 17, OUTER, 1, BRICK.dark)
-  p(OUTER, dy + 1, 3, 14, '#7a4f3a')
+  p(OUTER, dy + 1, 3, 14, isXmas ? '#b4202a' : '#7a4f3a')
+  if (isXmas) p(OUTER + 1, dy + 3, 1, 10, '#238547')
   // windows in the top wall, light falling in
   for (let x = 14; x + 12 < w - 8; x += 40) {
-    p(x, 0, 12, 3, BRICK.window)
+    p(x, 0, 12, 3, isXmas ? '#3b5878' : BRICK.window)
     p(x + 5, 0, 1, 3, '#dceff7')
+    if (isXmas) {
+      const snowX = x + 1 + ((tick + x) % 4) * 2
+      const snowY = (tick >> 1) % 3
+      p(snowX, snowY, 1, 1, C.white)
+      p(x + 8, (snowY + 1) % 3, 1, 1, C.white)
+    }
+  }
+  if (isXmas) {
+    holidayLights(painter(ctx, OUTER, OUTER), w - OUTER * 2, tick)
   }
 }
 
@@ -459,6 +487,9 @@ function drawRoom(p, room) {
   p(x + 3, y + 3, Math.min(w - 40, 56), 7, '#2a2633')
   const boardW = Math.min(26, w - 70)
   if (boardW > 8) whiteboard(painter(ctx, x + w - boardW - 4, y + 3), boardW, room.notes)
+  if (getTheme() === 'christmas') {
+    holidayLights(painter(ctx, x + 2, y), w - 4, tick)
+  }
 }
 
 /** Where an area's plant (7 x 9) and bookshelf (12 x 9, roomy areas only) stand. */
@@ -473,13 +504,13 @@ function roomDecor(room) {
 function commonItems(c) {
   const decor = layout.rooms.flatMap(roomDecor).map((d) =>
     d.kind === 'plant'
-      ? { box: [d.x, d.y, 7, 9], base: d.y + 9, draw: () => plant(painter(ctx, d.x, d.y)) }
+      ? { box: [d.x, d.y, 7, 9], base: d.y + 9, draw: () => plant(painter(ctx, d.x, d.y), tick) }
       : { box: [d.x, d.y, 12, 9], base: d.y + 9, draw: () => bookshelf(painter(ctx, d.x, d.y)) }
   )
   if (!c) return decor.sort((a, b) => a.base - b.base)
   const playing = [...walkers.values()].filter((w) => w.mode === 'away' && w.activity?.kind === 'foosball').length >= 2
   const { lounge: l, kitchen: k, foosball: f, cooler, coffee, bowls } = c
-  return [
+  const items = [
     { box: [bowls.x, bowls.y, 13, 4], base: bowls.y + 4, draw: () => dogBowls(painter(ctx, bowls.x, bowls.y), tick) },
     { box: [l.x, l.y, l.w, 26], base: l.y + 14, draw: () => lounge(painter(ctx, l.x, l.y), l.w) },
     { box: [k.x, k.y - 6, k.w, 18], base: k.y + 12, draw: () => kitchen(painter(ctx, k.x, k.y), k.w) },
@@ -488,7 +519,27 @@ function commonItems(c) {
     { box: [cooler.x, cooler.y, 7, 16], base: cooler.y + 16, draw: () => waterCooler(painter(ctx, cooler.x, cooler.y), tick) },
     { box: [coffee.x, coffee.y, 9, 14], base: coffee.y + 14, draw: () => coffeeMachine(painter(ctx, coffee.x, coffee.y), tick) },
     ...decor
-  ].sort((a, b) => a.base - b.base)
+  ]
+  if (getTheme() === 'christmas') {
+    const tx = l.x - 11
+    const ty = l.y + 3
+    items.push({
+      box: [tx, ty, 15, 21],
+      base: ty + 20,
+      draw: () => christmasTree(painter(ctx, tx, ty), tick)
+    })
+    const lastBoothX = c.booths[c.booths.length - 1]?.bx ?? 0
+    if (lastBoothX - (c.bed.x + 24) >= 18) {
+      const tx2 = c.bed.x + 26
+      const ty2 = c.bed.y - 8
+      items.push({
+        box: [tx2, ty2, 15, 21],
+        base: ty2 + 20,
+        draw: () => christmasTree(painter(ctx, tx2, ty2), tick)
+      })
+    }
+  }
+  return items.sort((a, b) => a.base - b.base)
 }
 
 const overlaps = ([ax, ay, aw, ah], [bx, by, bw, bh]) => ax < bx + bw && bx < ax + aw && ay < by + bh && by < ay + ah
