@@ -217,7 +217,37 @@ test('staffState classifies waiting on user input or finished process', () => {
   )
   assert.equal(snapWithStop.floors[0].desks[0].staff[0].label, 'IT-74481')
   assert.equal(snapWithStop.floors[0].desks[0].staff[0].state, 'waiting')
-  // ordinary conversational replies that end with a polite 'necesito' or question stay 'done' (no false alarm)
+  // explicit Spanish and English decision requests ('necesito: ...', 'need: ...', 'I need your approval...')
+  assert.equal(
+    staffState({
+      state: 'done',
+      lastAssistantMessage:
+        'Sí, conviene regenerarlos por lotes.\n\nnecesito: que confirmes este orden (primero la revisión del modelo y luego regenerar encima por lotes).'
+    }),
+    'waiting'
+  )
+  assert.equal(
+    staffState({
+      state: 'done',
+      lastAssistantMessage: 'Migration plan is ready.\n\nNeed: your confirmation to run it on staging.'
+    }),
+    'waiting'
+  )
+  assert.equal(
+    staffState({
+      state: 'done',
+      lastAssistantMessage: 'All checks passed.\n\nI need your approval before merging.'
+    }),
+    'waiting'
+  )
+  assert.equal(
+    staffState({
+      state: 'done',
+      lastAssistantMessage: 'Two approaches are possible.\n\nWaiting for your decision on option A vs B.'
+    }),
+    'waiting'
+  )
+  // ordinary conversational replies that end with a soft 'necesito saber si quieres' or routine status stay 'done'
   assert.equal(
     staffState({
       state: 'done',
@@ -230,7 +260,7 @@ test('staffState classifies waiting on user input or finished process', () => {
     staffState({
       state: 'working',
       programStatus: { state: 'done' },
-      lastAssistantMessage: 'Summary ready.\n\nShould I open the PR now?'
+      lastAssistantMessage: 'Ya quedó aplicado el arreglo.\n\nsigo con: GMC-10b hasta su PR.'
     }),
     'done'
   )

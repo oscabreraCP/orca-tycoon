@@ -94,7 +94,7 @@ export async function readAllHosts(
 }
 
 const NEED_YOU_LINE =
-  /^(?:necesito\s*:|necesito\s+(?:tu|su|que|saber|confirmar|definir|decidir|autorizaci[oó]n|visto)\b|need\s+from\s+you\s*:|(?:waiting|awaiting)\s+(?:for|on)\s+your\b)/i
+  /^(?:necesito\s*:|necesito\s+(?:tu|su)\s+(?:confirmaci[oó]n|aprobaci[oó]n|decisi[oó]n|visto\s+bueno|autorizaci[oó]n|s[ií]|ok|okay|respuesta|indicaci[oó]n)\b|necesito\s+que\s+(?:confirmes|decidas|apruebes|autorices|indiques|elijas|me\s+digas)\b|(?:espero|esperando)\s+(?:tu|su)\s+(?:confirmaci[oó]n|aprobaci[oó]n|decisi[oó]n|visto\s+bueno|autorizaci[oó]n|respuesta|indicaci[oó]n)\b|(?:need|needed|need\s+from\s+you|what\s+i\s+need|decision\s+needed|input\s+needed|action\s+needed|waiting\s+on\s+you)\s*:|(?:i\s+)?need\s+your\s+(?:confirmation|approval|decision|input|go-ahead|sign-off|ok|okay|permission|direction|ruling|answer|reply|response)\b|(?:waiting|awaiting)\s+(?:for|on)\s+your\s+(?:confirmation|approval|decision|input|go-ahead|sign-off|ok|okay|permission|direction|ruling|answer|reply|response)\b|please\s+(?:confirm|decide|approve|let\s+me\s+know\s+whether)\b)/i
 const PIPELINE_WAIT_LINE =
   /\b(?:el\s+pipeline\s+se\s+detuvo\s+y\s+pide\s+una\s+decisi[oó]n|pide\s+una\s+decisi[oó]n\s+tuya|a\s+human\s+decides\s+the\s+next\s+step|waiting_for_person)\b/i
 
@@ -191,17 +191,14 @@ function matchRunStop(row: Row, runStops: readonly RunStopWait[]): RunStopWait |
 }
 
 /**
- * Extracts the prompt ONLY when a finished turn stopped on a pipeline escalation
- * (either matched in `~/.stratos/run-stops` or explicitly announcing a pipeline pause in prose),
- * never on ordinary conversational replies that merely end with a polite `necesito` or question.
+ * Extracts the prompt when a finished turn asks the user for a decision in prose
+ * (an explicit Spanish/English decision line like `necesito: ...` or `need: ...`,
+ * a pipeline pause notice, or a session matched in `~/.stratos/run-stops`).
  */
 export function waitingReplyPrompt(row: Row, runStops: readonly RunStopWait[] = []): string | null {
   const matchedStop = matchRunStop(row, runStops)
   const msg = str(row.lastAssistantMessage)
   const lines = msg ? msg.split('\n').map(cleanReplyLine).filter(Boolean) : []
-  const hasPipelinePause = lines.some((l) => PIPELINE_WAIT_LINE.test(l))
-
-  if (!matchedStop && !hasPipelinePause) return null
 
   for (let i = lines.length - 1; i >= 0; i--) {
     if (NEED_YOU_LINE.test(lines[i])) return lines[i].slice(0, 120)
@@ -210,7 +207,8 @@ export function waitingReplyPrompt(row: Row, runStops: readonly RunStopWait[] = 
   for (let i = lines.length - 1; i >= 0; i--) {
     if (PIPELINE_WAIT_LINE.test(lines[i])) return lines[i].slice(0, 120)
   }
-  return 'Pipeline waiting for your decision'
+  if (matchedStop) return 'Pipeline waiting for your decision'
+  return null
 }
 
 export function staffState(row: Row, runStops: readonly RunStopWait[] = []): StaffState {
