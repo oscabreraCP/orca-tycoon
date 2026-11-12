@@ -4,7 +4,8 @@
 // its SSH targets; each paired Orca server (a cloud VM) answers only its own `--environment` call.
 import type { OrcaWorkerApi } from 'orca/worker'
 import { execFile } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { closeSync, existsSync, fstatSync, openSync, readdirSync, readFileSync, readSync } from 'node:fs'
+import { join } from 'node:path'
 import type { Desk, Floor, OfficeSnapshot, Specialist, Staff, StaffState, SwitchOutcome } from './protocol'
 
 const CLI_CANDIDATES = [
@@ -92,7 +93,125 @@ export async function readAllHosts(
   return { local, servers: answers.filter((a): a is ServerAnswer => a !== null) }
 }
 
-export function staffState(row: Row): StaffState {
+const NEED_YOU_LINE =
+  /^(?:necesito\s*:|necesito\s+(?:tu|su)\s+(?:confirmaci[oó]n|aprobaci[oó]n|decisi[oó]n|visto\s+bueno|autorizaci[oó]n|s[ií]|ok|okay|respuesta|indicaci[oó]n)\b|necesito\s+que\s+(?:confirmes|decidas|apruebes|autorices|indiques|elijas|me\s+digas)\b|(?:espero|esperando)\s+(?:tu|su)\s+(?:confirmaci[oó]n|aprobaci[oó]n|decisi[oó]n|visto\s+bueno|autorizaci[oó]n|respuesta|indicaci[oó]n)\b|(?:need|needed|need\s+from\s+you|what\s+i\s+need|decision\s+needed|input\s+needed|action\s+needed|waiting\s+on\s+you)\s*:|(?:i\s+)?need\s+your\s+(?:confirmation|approval|decision|input|go-ahead|sign-off|ok|okay|permission|direction|ruling|answer|reply|response)\b|(?:waiting|awaiting)\s+(?:for|on)\s+your\s+(?:confirmation|approval|decision|input|go-ahead|sign-off|ok|okay|permission|direction|ruling|answer|reply|response)\b|please\s+(?:confirm|decide|approve|let\s+me\s+know\s+whether)\b)/i
+const PIPELINE_WAIT_LINE =
+  /\b(?:el\s+pipeline\s+se\s+detuvo\s+y\s+pide\s+una\s+decisi[oó]n|pide\s+una\s+decisi[oó]n\s+tuya|a\s+human\s+decides\s+the\s+next\s+step|waiting_for_person)\b/i
+
+function cleanReplyLine(line: string): string {
+  return line
+    .replace(/^(?:[-*>•]+\s*)+/, '')
+    .replace(/\*\*|__/g, '')
+    .trim()
+}
+
+export type RunStopWait = {
+  subject: string | null
+  reasonText: string | null
+  transcriptTail: string
+}
+
+const TAIL_BYTES = 32 * 1024
+
+function readTail(filePath: string): string {
+  let fd: number | null = null
+  try {
+    fd = openSync(filePath, 'r')
+    const size = fstatSync(fd).size
+    const length = Math.min(size, TAIL_BYTES)
+    const buffer = Buffer.alloc(length)
+    readSync(fd, buffer, 0, length, Math.max(0, size - length))
+    return buffer.toString('utf8')
+  } catch {
+    return ''
+  } finally {
+    if (fd !== null) {
+      try {
+        closeSync(fd)
+      } catch {
+        // ignore close errors
+      }
+    }
+  }
+}
+
+/**
+ * Reads `~/.stratos/run-stops/*.json` (the same ledger Claude's statusline reads for `🙋 te necesita`)
+ * and returns the latest record per session when that session is currently stopped in `waiting_for_person`.
+ */
+export function readWaitingRunStops(): RunStopWait[] {
+  const root = process.env.STRATOS_STORE_ROOT ?? process.env.HOME ?? ''
+  if (!root) return []
+  const dir = join(root, '.stratos', 'run-stops')
+  let files: string[] = []
+  try {
+    files = readdirSync(dir).filter((f) => f.endsWith('.json'))
+  } catch {
+    return []
+  }
+  const latestBySession = new Map<string, Row>()
+  for (const file of files) {
+    try {
+      const rec = JSON.parse(readFileSync(join(dir, file), 'utf8')) as Row
+      const sid = str(rec.owner_session_id)
+      if (!sid) continue
+      const prev = latestBySession.get(sid)
+      const prevAt = str(prev?.updated_at) ?? ''
+      const curAt = str(rec.updated_at) ?? ''
+      if (!prev || curAt >= prevAt) latestBySession.set(sid, rec)
+    } catch {
+      // ignore unreadable record
+    }
+  }
+  const out: RunStopWait[] = []
+  for (const rec of latestBySession.values()) {
+    if (rec.state !== 'stopped' || rec.stop_reason !== 'waiting_for_person') continue
+    const transcriptPath = str(rec.owner_transcript_path)
+    const transcriptTail = transcriptPath ? readTail(transcriptPath) : ''
+    out.push({
+      subject: str(rec.subject),
+      reasonText: str(rec.reason_text),
+      transcriptTail
+    })
+  }
+  return out
+}
+
+function matchRunStop(row: Row, runStops: readonly RunStopWait[]): RunStopWait | null {
+  if (runStops.length === 0) return null
+  const msg = str(row.lastAssistantMessage)
+  const firstLine = msg?.split('\n')[0]?.trim() ?? ''
+  const probe = firstLine.slice(0, 60)
+  for (const stop of runStops) {
+    if (probe.length >= 20 && stop.transcriptTail && stop.transcriptTail.includes(probe)) {
+      return stop
+    }
+  }
+  return null
+}
+
+/**
+ * Extracts the prompt when a finished turn asks the user for a decision in prose
+ * (an explicit Spanish/English decision line like `necesito: ...` or `need: ...`,
+ * a pipeline pause notice, or a session matched in `~/.stratos/run-stops`).
+ */
+export function waitingReplyPrompt(row: Row, runStops: readonly RunStopWait[] = []): string | null {
+  const matchedStop = matchRunStop(row, runStops)
+  const msg = str(row.lastAssistantMessage)
+  const lines = msg ? msg.split('\n').map(cleanReplyLine).filter(Boolean) : []
+
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (NEED_YOU_LINE.test(lines[i])) return lines[i].slice(0, 120)
+  }
+  if (matchedStop?.reasonText) return matchedStop.reasonText.slice(0, 120)
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (PIPELINE_WAIT_LINE.test(lines[i])) return lines[i].slice(0, 120)
+  }
+  if (matchedStop) return 'Pipeline waiting for your decision'
+  return null
+}
+
+export function staffState(row: Row, runStops: readonly RunStopWait[] = []): StaffState {
   if (row.agentWait != null && (typeof row.agentWait !== 'object' || Object.keys(row.agentWait).length > 0)) {
     return 'waiting'
   }
@@ -100,11 +219,15 @@ export function staffState(row: Row): StaffState {
   if (state === 'working') {
     if (row.workingMode !== 'monitoring' && row.programStatus && typeof row.programStatus === 'object') {
       const prog = (row.programStatus as Row).state
-      if (prog && prog !== 'working') return prog === 'done' ? 'done' : 'idle'
+      if (prog && prog !== 'working') {
+        if (prog === 'done' && waitingReplyPrompt(row, runStops)) return 'waiting'
+        return prog === 'done' ? 'done' : 'idle'
+      }
     }
     return row.workingMode === 'monitoring' ? 'monitoring' : 'working'
   }
-  if (state === 'waiting' || state === 'blocked' || state === 'done') return state
+  if (state === 'waiting' || state === 'blocked') return state
+  if (state === 'done') return waitingReplyPrompt(row, runStops) ? 'waiting' : 'done'
   return 'idle'
 }
 
@@ -264,10 +387,20 @@ export function isLeaderStaff(row: Row, deskName: string): boolean {
 }
 
 /** The one line an agent says when you click it. */
-export function lineOf(row: Row, state: StaffState, specialists: Specialist[], isLeader = false): string {
+export function lineOf(
+  row: Row,
+  state: StaffState,
+  specialists: Specialist[],
+  isLeader = false,
+  runStops: readonly RunStopWait[] = []
+): string {
   const busy = specialists.filter((s) => s.state !== 'done' && s.state !== 'idle')
   if (state === 'waiting') {
-    const prompt = str(row.agentWaitPrompt) ?? str((row.agentWait as Row)?.prompt) ?? str((row.agentWait as Row)?.message)
+    const prompt =
+      str(row.agentWaitPrompt) ??
+      str((row.agentWait as Row)?.prompt) ??
+      str((row.agentWait as Row)?.message) ??
+      waitingReplyPrompt(row, runStops)
     if (prompt) return prompt
     return /ask/i.test(String(row.toolName ?? '')) ? 'I have a question for you' : 'I need your input'
   }
@@ -336,19 +469,26 @@ export function labelOf(name: string | null, deskName: string, generic = isGener
   return firstWord(title) || ownName(deskName) || 'workspace'
 }
 
-function toStaff(row: Row, deskName: string, generic: boolean): Staff {
+function toStaff(row: Row, deskName: string, generic: boolean, runStops: readonly RunStopWait[]): Staff {
   const specialists = specialistsOf(row)
   const isLeader = isLeaderStaff(row, deskName)
+  const matchedStop = matchRunStop(row, runStops)
+  const rawName = str(row.conversationName) ?? str(row.displayName) ?? str(row.taskTitle)
+  const name =
+    matchedStop?.subject && rawName && !rawName.includes(matchedStop.subject)
+      ? `${matchedStop.subject} · ${rawName}`
+      : (rawName ?? matchedStop?.subject ?? null)
+  const state = staffState(row, runStops)
   return {
     id: String(row.paneKey ?? ''),
     agent: str(row.agentType),
-    name: str(row.conversationName) ?? str(row.displayName) ?? str(row.taskTitle),
-    label: labelOf(str(row.conversationName), deskName, generic),
+    name,
+    label: labelOf(name, deskName, generic),
     task: str(row.taskTitle) ?? str(row.prompt)?.slice(0, 140) ?? null,
     tool: str(row.toolName),
     said: str(row.lastAssistantMessage)?.split('\n')[0]?.slice(0, 120) ?? null,
-    state: staffState(row),
-    line: lineOf(row, staffState(row), specialists, isLeader),
+    state,
+    line: lineOf(row, state, specialists, isLeader, runStops),
     since: typeof row.stateStartedAt === 'number' ? row.stateStartedAt : 0,
     specialists,
     isLeader
@@ -365,7 +505,12 @@ const worktreesOf = (raw: unknown): Row[] => {
  * join the team of their project like any other, their ids prefixed with the server so a desk
  * there never collides with one here, and they carry the selector "Open in Orca" goes through.
  */
-export function toSnapshot(raw: unknown, at: number, servers: ServerAnswer[] = []): OfficeSnapshot {
+export function toSnapshot(
+  raw: unknown,
+  at: number,
+  servers: ServerAnswer[] = [],
+  runStops: readonly RunStopWait[] = []
+): OfficeSnapshot {
   type Placed = { w: Row; environment: string | null }
   const all: Placed[] = [
     ...worktreesOf(raw).map((w) => ({ w, environment: null })),
@@ -392,6 +537,7 @@ export function toSnapshot(raw: unknown, at: number, servers: ServerAnswer[] = [
       w.isMainWorktree === true ||
       isGenericName(name, defaultBranch) ||
       (seen.get(`${repo}\n${name.toLowerCase()}`) ?? 0) > 1
+    const stopsForHost = environment ? [] : runStops
     const desk: Desk = {
       id: idOf(String(w.worktreeId ?? ''), environment) ?? '',
       name,
@@ -399,7 +545,7 @@ export function toSnapshot(raw: unknown, at: number, servers: ServerAnswer[] = [
       parentId: idOf(str(w.parentWorktreeId), environment),
       environment,
       host: environment ? str((w.environment as Row | null)?.name) ?? environment : null,
-      staff: agents.map((row) => toStaff(row, name, generic))
+      staff: agents.map((row) => toStaff(row, name, generic, stopsForHost))
     }
     const list = floors.get(repo) ?? []
     list.push(desk)
@@ -491,7 +637,7 @@ export default function activate(orca: OrcaWorkerApi): void {
         orca.log(`worktree ps on ${environment} failed: ${error instanceof Error ? error.message : String(error)}`)
       )
       environments = pairedEnvironments(local)
-      last = toSnapshot(local, Date.now(), servers)
+      last = toSnapshot(local, Date.now(), servers, readWaitingRunStops())
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       orca.log(`worktree ps failed: ${message}`)

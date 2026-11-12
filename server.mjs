@@ -71,7 +71,110 @@ function switchTerminal(paneKey) {
 
 const str = (v) => (typeof v === 'string' && v.trim() ? v.trim() : null)
 
-function staffState(row) {
+const NEED_YOU_LINE =
+  /^(?:necesito\s*:|necesito\s+(?:tu|su)\s+(?:confirmaci[oó]n|aprobaci[oó]n|decisi[oó]n|visto\s+bueno|autorizaci[oó]n|s[ií]|ok|okay|respuesta|indicaci[oó]n)\b|necesito\s+que\s+(?:confirmes|decidas|apruebes|autorices|indiques|elijas|me\s+digas)\b|(?:espero|esperando)\s+(?:tu|su)\s+(?:confirmaci[oó]n|aprobaci[oó]n|decisi[oó]n|visto\s+bueno|autorizaci[oó]n|respuesta|indicaci[oó]n)\b|(?:need|needed|need\s+from\s+you|what\s+i\s+need|decision\s+needed|input\s+needed|action\s+needed|waiting\s+on\s+you)\s*:|(?:i\s+)?need\s+your\s+(?:confirmation|approval|decision|input|go-ahead|sign-off|ok|okay|permission|direction|ruling|answer|reply|response)\b|(?:waiting|awaiting)\s+(?:for|on)\s+your\s+(?:confirmation|approval|decision|input|go-ahead|sign-off|ok|okay|permission|direction|ruling|answer|reply|response)\b|please\s+(?:confirm|decide|approve|let\s+me\s+know\s+whether)\b)/i
+const PIPELINE_WAIT_LINE =
+  /\b(?:el\s+pipeline\s+se\s+detuvo\s+y\s+pide\s+una\s+decisi[oó]n|pide\s+una\s+decisi[oó]n\s+tuya|a\s+human\s+decides\s+the\s+next\s+step|waiting_for_person)\b/i
+
+function cleanReplyLine(line) {
+  return line
+    .replace(/^(?:[-*>•]+\s*)+/, '')
+    .replace(/\*\*|__/g, '')
+    .trim()
+}
+
+const TAIL_BYTES = 32 * 1024
+
+function readTail(filePath) {
+  let fd = null
+  try {
+    fd = fs.openSync(filePath, 'r')
+    const size = fs.fstatSync(fd).size
+    const length = Math.min(size, TAIL_BYTES)
+    const buffer = Buffer.alloc(length)
+    fs.readSync(fd, buffer, 0, length, Math.max(0, size - length))
+    return buffer.toString('utf8')
+  } catch {
+    return ''
+  } finally {
+    if (fd !== null) {
+      try {
+        fs.closeSync(fd)
+      } catch {
+        // ignore close errors
+      }
+    }
+  }
+}
+
+function readWaitingRunStops() {
+  const root = process.env.STRATOS_STORE_ROOT ?? process.env.HOME ?? ''
+  if (!root) return []
+  const dir = path.join(root, '.stratos', 'run-stops')
+  let files = []
+  try {
+    files = fs.readdirSync(dir).filter((f) => f.endsWith('.json'))
+  } catch {
+    return []
+  }
+  const latestBySession = new Map()
+  for (const file of files) {
+    try {
+      const rec = JSON.parse(fs.readFileSync(path.join(dir, file), 'utf8'))
+      const sid = str(rec.owner_session_id)
+      if (!sid) continue
+      const prev = latestBySession.get(sid)
+      const prevAt = str(prev?.updated_at) ?? ''
+      const curAt = str(rec.updated_at) ?? ''
+      if (!prev || curAt >= prevAt) latestBySession.set(sid, rec)
+    } catch {
+      // ignore unreadable record
+    }
+  }
+  const out = []
+  for (const rec of latestBySession.values()) {
+    if (rec.state !== 'stopped' || rec.stop_reason !== 'waiting_for_person') continue
+    const transcriptPath = str(rec.owner_transcript_path)
+    const transcriptTail = transcriptPath ? readTail(transcriptPath) : ''
+    out.push({
+      subject: str(rec.subject),
+      reasonText: str(rec.reason_text),
+      transcriptTail
+    })
+  }
+  return out
+}
+
+function matchRunStop(row, runStops = []) {
+  if (runStops.length === 0) return null
+  const msg = str(row.lastAssistantMessage)
+  const firstLine = msg?.split('\n')[0]?.trim() ?? ''
+  const probe = firstLine.slice(0, 60)
+  for (const stop of runStops) {
+    if (probe.length >= 20 && stop.transcriptTail && stop.transcriptTail.includes(probe)) {
+      return stop
+    }
+  }
+  return null
+}
+
+function waitingReplyPrompt(row, runStops = []) {
+  const matchedStop = matchRunStop(row, runStops)
+  const msg = str(row.lastAssistantMessage)
+  const lines = msg ? msg.split('\n').map(cleanReplyLine).filter(Boolean) : []
+
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (NEED_YOU_LINE.test(lines[i])) return lines[i].slice(0, 120)
+  }
+  if (matchedStop?.reasonText) return matchedStop.reasonText.slice(0, 120)
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (PIPELINE_WAIT_LINE.test(lines[i])) return lines[i].slice(0, 120)
+  }
+  if (matchedStop) return 'Pipeline waiting for your decision'
+  return null
+}
+
+function staffState(row, runStops = []) {
   if (row.agentWait != null && (typeof row.agentWait !== 'object' || Object.keys(row.agentWait).length > 0)) {
     return 'waiting'
   }
@@ -79,11 +182,15 @@ function staffState(row) {
   if (state === 'working') {
     if (row.workingMode !== 'monitoring' && row.programStatus && typeof row.programStatus === 'object') {
       const prog = row.programStatus.state
-      if (prog && prog !== 'working') return prog === 'done' ? 'done' : 'idle'
+      if (prog && prog !== 'working') {
+        if (prog === 'done' && waitingReplyPrompt(row, runStops)) return 'waiting'
+        return prog === 'done' ? 'done' : 'idle'
+      }
     }
     return row.workingMode === 'monitoring' ? 'monitoring' : 'working'
   }
-  if (state === 'waiting' || state === 'blocked' || state === 'done') return state
+  if (state === 'waiting' || state === 'blocked') return state
+  if (state === 'done') return waitingReplyPrompt(row, runStops) ? 'waiting' : 'done'
   return 'idle'
 }
 
@@ -123,7 +230,7 @@ function isLeaderStaff(row) {
   return false
 }
 
-function toStaff(row) {
+function toStaff(row, runStops = []) {
   const subs = Array.isArray(row.subagents) ? row.subagents : []
   const specialists = subs.map((s) => ({
     id: String(s.id ?? ''),
@@ -132,23 +239,31 @@ function toStaff(row) {
     state: specialistState(s.state)
   }))
   const isLeader = isLeaderStaff(row)
+  const matchedStop = matchRunStop(row, runStops)
+  const rawName = str(row.conversationName) ?? str(row.displayName) ?? str(row.taskTitle)
+  const name =
+    matchedStop?.subject && rawName && !rawName.includes(matchedStop.subject)
+      ? `${matchedStop.subject} · ${rawName}`
+      : (rawName ?? matchedStop?.subject ?? null)
+  const state = staffState(row, runStops)
+  const waitPrompt = state === 'waiting' ? (str(row.agentWaitPrompt) ?? str(row.agentWait?.prompt) ?? str(row.agentWait?.message) ?? waitingReplyPrompt(row, runStops)) : null
   return {
     id: String(row.paneKey ?? ''),
     agent: str(row.agentType),
-    name: str(row.conversationName) ?? str(row.displayName) ?? str(row.taskTitle),
+    name,
     task: str(row.taskTitle) ?? str(row.prompt)?.slice(0, 140) ?? null,
     tool: str(row.toolName),
     said: str(row.lastAssistantMessage)?.split('\n')[0]?.slice(0, 120) ?? null,
-    state: staffState(row),
-    line: isLeader ? 'Coordinating workers' : (str(row.statusMessage) ?? (str(row.toolName) ? `using ${row.toolName}` : 'working')),
-    label: str(row.conversationName) ?? '',
+    state,
+    line: waitPrompt ?? (isLeader ? 'Coordinating workers' : (str(row.statusMessage) ?? (str(row.toolName) ? `using ${row.toolName}` : 'working'))),
+    label: name ?? '',
     since: typeof row.stateStartedAt === 'number' ? row.stateStartedAt : 0,
     specialists,
     isLeader
   }
 }
 
-function toSnapshot(raw, at) {
+function toSnapshot(raw, at, runStops = readWaitingRunStops()) {
   const result = raw?.result
   const worktrees = Array.isArray(result?.worktrees) ? result.worktrees : []
   const floors = new Map()
@@ -165,7 +280,7 @@ function toSnapshot(raw, at) {
       parentId: str(w.parentWorktreeId),
       environment: null,
       host: null,
-      staff: agents.map(toStaff)
+      staff: agents.map((row) => toStaff(row, runStops))
     }
     const list = floors.get(repo) ?? []
     list.push(desk)

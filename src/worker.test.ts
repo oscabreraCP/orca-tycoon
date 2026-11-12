@@ -11,6 +11,7 @@ import {
   switchTo,
   terminalSwitchArgs,
   toSnapshot,
+  waitingReplyPrompt,
   worktreeActivateArgs
 } from './worker'
 
@@ -184,6 +185,103 @@ test('staffState classifies waiting on user input or finished process', () => {
   assert.equal(staffState({ state: 'working', workingMode: 'monitoring' }), 'monitoring')
   // programStatus done while state was left as working
   assert.equal(staffState({ state: 'working', programStatus: { state: 'done' } }), 'done')
+  // finished turn whose pipeline stopped waiting for a person
+  const pipelinePause = {
+    state: 'done',
+    programStatus: { state: 'done' },
+    lastAssistantMessage:
+      'El pipeline se detuvo y pide una decisión tuya antes de seguir.\n\nnecesito: tu visto bueno para volver a correr las pruebas.'
+  }
+  assert.equal(staffState(pipelinePause), 'waiting')
+  assert.equal(waitingReplyPrompt(pipelinePause), 'necesito: tu visto bueno para volver a correr las pruebas.')
+  // matched against an active Stratos run-stop record
+  const runStopRow = {
+    state: 'done',
+    conversationName: 'Stratos-autopilot build memory alert',
+    lastAssistantMessage: 'Las dos pruebas fallaron por carga de CPU en el intento anterior.'
+  }
+  const runStops = [
+    {
+      subject: 'IT-74481',
+      reasonText: 'The vitest lane failed at unchanged inputs',
+      transcriptTail: '{"type":"assistant","text":"Las dos pruebas fallaron por carga de CPU en el intento anterior."}'
+    }
+  ]
+  assert.equal(staffState(runStopRow, runStops), 'waiting')
+  assert.equal(waitingReplyPrompt(runStopRow, runStops), 'The vitest lane failed at unchanged inputs')
+  const snapWithStop = toSnapshot(
+    { result: { worktrees: [{ worktreeId: 'w1', repo: 'stratos-autopilot', displayName: 'main', agents: [runStopRow] }] } },
+    1,
+    [],
+    runStops
+  )
+  assert.equal(snapWithStop.floors[0].desks[0].staff[0].label, 'IT-74481')
+  assert.equal(snapWithStop.floors[0].desks[0].staff[0].state, 'waiting')
+  // explicit Spanish and English decision requests ('necesito: ...', 'need: ...', 'I need your approval...')
+  assert.equal(
+    staffState({
+      state: 'done',
+      lastAssistantMessage:
+        'Sí, conviene regenerarlos por lotes.\n\nnecesito: que confirmes este orden (primero la revisión del modelo y luego regenerar encima por lotes).'
+    }),
+    'waiting'
+  )
+  assert.equal(
+    staffState({
+      state: 'done',
+      lastAssistantMessage: 'Migration plan is ready.\n\nNeed: your confirmation to run it on staging.'
+    }),
+    'waiting'
+  )
+  assert.equal(
+    staffState({
+      state: 'done',
+      lastAssistantMessage: 'All checks passed.\n\nI need your approval before merging.'
+    }),
+    'waiting'
+  )
+  assert.equal(
+    staffState({
+      state: 'done',
+      lastAssistantMessage: 'Two approaches are possible.\n\nWaiting for your decision on option A vs B.'
+    }),
+    'waiting'
+  )
+  // ordinary conversational replies that end with a soft 'necesito saber si quieres' or routine status stay 'done'
+  assert.equal(
+    staffState({
+      state: 'done',
+      lastAssistantMessage:
+        'Funciona en Windows solo si el ejecutable orca está en el PATH.\n\nnecesito saber si quieres que abramos una rama y PR en orca-tycoon.'
+    }),
+    'done'
+  )
+  assert.equal(
+    staffState({
+      state: 'working',
+      programStatus: { state: 'done' },
+      lastAssistantMessage: 'Ya quedó aplicado el arreglo.\n\nsigo con: GMC-10b hasta su PR.'
+    }),
+    'done'
+  )
+  // active working or monitoring turns ignore stale lastAssistantMessage questions
+  assert.equal(
+    staffState({
+      state: 'working',
+      programStatus: { state: 'working' },
+      lastAssistantMessage: 'El pipeline se detuvo y pide una decisión tuya.\n\nnecesito: tu visto bueno.'
+    }),
+    'working'
+  )
+  assert.equal(
+    staffState({
+      state: 'working',
+      workingMode: 'monitoring',
+      programStatus: { state: 'done' },
+      lastAssistantMessage: 'El pipeline se detuvo y pide una decisión tuya.\n\nnecesito: tu visto bueno.'
+    }),
+    'monitoring'
+  )
 })
 
 test('a seat is labelled by ticket, issue number, its own name, or the title when its name is generic', () => {
