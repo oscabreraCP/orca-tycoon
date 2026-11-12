@@ -37,3 +37,14 @@ test('an agent on a paired server works on a thin client, a local one on a dark 
   assert.equal(paint(true, 'working', 0).get('2,11'), C.thinEdge)
   assert.equal(paint(true, 'done', 2).get('2,11'), C.thinEdge)
 })
+
+test('a waiting agent paints an animated question mark overhead', () => {
+  const px = new Map<string, string>()
+  workstation((x: number, y: number, w: number, h: number, c: string) => {
+    for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) px.set(`${x + i},${y + j}`, c)
+  }, { id: 'a', state: 'waiting' }, 0, false, false)
+  // qx = 9, qy = -3, glyph '?' starts at (9, -3) with color C.amber
+  assert.equal(px.get('9,-3'), C.amber)
+  assert.equal(px.get('10,-3'), C.amber)
+  assert.equal(px.get('11,-3'), C.amber)
+})

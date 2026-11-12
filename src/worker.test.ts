@@ -6,6 +6,7 @@ import {
   labelOf,
   pairedEnvironments,
   readAllHosts,
+  staffState,
   switchTo,
   terminalSwitchArgs,
   toSnapshot,
@@ -120,6 +121,18 @@ test('agents say one short line about what they are doing', () => {
   assert.equal(say({ state: 'waiting', toolName: 'AskUserQuestion' }), 'I have a question for you')
   assert.equal(say({ state: 'blocked' }), "I'm stuck, can you help?")
   assert.equal(say({ state: 'done', lastAssistantMessage: 'Merged #12.\nMore below' }), 'Merged #12.')
+})
+
+test('staffState classifies waiting on user input or finished process', () => {
+  // agentWait flips working state to waiting
+  assert.equal(staffState({ state: 'working', agentWait: { prompt: 'Do you want to proceed?' } }), 'waiting')
+  assert.equal(staffState({ state: 'working', agentWait: 'waiting for user input' }), 'waiting')
+  // normal working
+  assert.equal(staffState({ state: 'working', agentWait: null }), 'working')
+  // monitoring
+  assert.equal(staffState({ state: 'working', workingMode: 'monitoring' }), 'monitoring')
+  // programStatus done while state was left as working
+  assert.equal(staffState({ state: 'working', programStatus: { state: 'done' } }), 'done')
 })
 
 test('a seat is labelled by ticket, issue number, its own name, or the title when its name is generic', () => {
@@ -355,9 +368,9 @@ test('asks every paired server, and a server that fails costs only its own desks
   )
   assert.equal(local, LOCAL_PS)
   assert.deepEqual(calls, [
-    ['worktree', 'ps', '--json'],
-    ['worktree', 'ps', '--json', '--environment', 'aaa'],
-    ['worktree', 'ps', '--json', '--environment', 'bbb']
+    ['worktree', 'ps', '--agent-wait', '--json'],
+    ['worktree', 'ps', '--agent-wait', '--json', '--environment', 'aaa'],
+    ['worktree', 'ps', '--agent-wait', '--json', '--environment', 'bbb']
   ])
   // this machine keeps the default wait; a server gets a shorter one
   assert.equal(timeouts[0], undefined)

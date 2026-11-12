@@ -78,11 +78,11 @@ export async function readAllHosts(
   run: (args: string[], timeout?: number) => Promise<unknown>,
   onServerError: (environment: string, error: unknown) => void = () => {}
 ): Promise<{ local: unknown; servers: ServerAnswer[] }> {
-  const local = await run(['worktree', 'ps', '--json'])
+  const local = await run(['worktree', 'ps', '--agent-wait', '--json'])
   const answers = await Promise.all(
     pairedEnvironments(local).map(async (environment) => {
       try {
-        return { environment, raw: await run(['worktree', 'ps', '--json', '--environment', environment], SERVER_TIMEOUT_MS) }
+        return { environment, raw: await run(['worktree', 'ps', '--agent-wait', '--json', '--environment', environment], SERVER_TIMEOUT_MS) }
       } catch (error) {
         onServerError(environment, error)
         return null
@@ -93,8 +93,17 @@ export async function readAllHosts(
 }
 
 export function staffState(row: Row): StaffState {
+  if (row.agentWait != null && (typeof row.agentWait !== 'object' || Object.keys(row.agentWait).length > 0)) {
+    return 'waiting'
+  }
   const state = row.state
-  if (state === 'working') return row.workingMode === 'monitoring' ? 'monitoring' : 'working'
+  if (state === 'working') {
+    if (row.workingMode !== 'monitoring' && row.programStatus && typeof row.programStatus === 'object') {
+      const prog = (row.programStatus as Row).state
+      if (prog && prog !== 'working') return prog === 'done' ? 'done' : 'idle'
+    }
+    return row.workingMode === 'monitoring' ? 'monitoring' : 'working'
+  }
   if (state === 'waiting' || state === 'blocked' || state === 'done') return state
   return 'idle'
 }
@@ -227,7 +236,11 @@ function toolLine(tool: string, input: string | null): string {
 /** The one line an agent says when you click it. */
 export function lineOf(row: Row, state: StaffState, specialists: Specialist[]): string {
   const busy = specialists.filter((s) => s.state !== 'done' && s.state !== 'idle')
-  if (state === 'waiting') return /ask/i.test(String(row.toolName ?? '')) ? 'I have a question for you' : 'I need you to look'
+  if (state === 'waiting') {
+    const prompt = str(row.agentWaitPrompt) ?? str((row.agentWait as Row)?.prompt) ?? str((row.agentWait as Row)?.message)
+    if (prompt) return prompt
+    return /ask/i.test(String(row.toolName ?? '')) ? 'I have a question for you' : 'I need your input'
+  }
   if (state === 'blocked') return "I'm stuck, can you help?"
   if (state === 'done') return str(row.lastAssistantMessage)?.split('\n')[0]?.slice(0, 120) ?? 'All done!'
   if (state === 'idle') return "I'm free"
