@@ -8,65 +8,138 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const PORT = 3456
 const HOST = '127.0.0.1' // localhost only
 
-const CLI_CANDIDATES = [
-  '/Applications/Orca.app/Contents/Resources/bin/orca',
-  `${process.env.HOME ?? ''}/Applications/Orca.app/Contents/Resources/bin/orca`
-]
+const isBatchFile = (command) => /\.(?:cmd|bat)$/i.test(command)
 
-function cliPath() {
-  return CLI_CANDIDATES.find((p) => fs.existsSync(p)) ?? 'orca'
+function cliCandidates() {
+  const platform = process.platform
+  const env = process.env
+  const resourcesPath = process.resourcesPath ?? null
+  const candidates = []
+  const push = (p) => {
+    const trimmed = p?.trim()
+    if (trimmed && !candidates.includes(trimmed)) candidates.push(trimmed)
+  }
+
+  push(env.ORCA_CLI_COMMAND)
+  if (env.ORCA_CLI_BIN_DIR?.trim()) {
+    const binDir = env.ORCA_CLI_BIN_DIR.trim().replace(/[\\/]+$/, '')
+    push(platform === 'win32' ? `${binDir}\\orca.exe` : `${binDir}/orca`)
+  }
+
+  if (resourcesPath) {
+    if (platform === 'win32') {
+      push(`${resourcesPath}\\bin\\orca.exe`)
+      push(`${resourcesPath}\\bin\\orca.cmd`)
+    } else if (platform === 'linux') {
+      push(`${resourcesPath}/bin/orca-ide`)
+      push(`${resourcesPath}/bin/orca`)
+    } else {
+      push(`${resourcesPath}/bin/orca`)
+    }
+  }
+
+  if (platform === 'win32') {
+    const roots = [
+      env.LOCALAPPDATA,
+      env.USERPROFILE ? `${env.USERPROFILE}\\AppData\\Local` : undefined,
+      env.PROGRAMFILES,
+      env['PROGRAMFILES(X86)']
+    ]
+    for (const root of roots) {
+      if (!root?.trim()) continue
+      const base = root.trim().replace(/[\\/]+$/, '')
+      push(`${base}\\Programs\\Orca\\resources\\bin\\orca.exe`)
+      push(`${base}\\Programs\\orca\\resources\\bin\\orca.exe`)
+      push(`${base}\\Orca\\resources\\bin\\orca.exe`)
+      push(`${base}\\Programs\\Orca\\resources\\bin\\orca.cmd`)
+      push(`${base}\\orca\\bin\\orca.cmd`)
+    }
+  } else if (platform === 'linux') {
+    if (env.HOME?.trim()) {
+      const home = env.HOME.trim().replace(/\/+$/, '')
+      push(`${home}/.config/Orca/linux-orca-cli-shim/orca`)
+      push(`${home}/.local/bin/orca-ide`)
+    }
+    push('/usr/local/bin/orca-ide')
+    push('/usr/bin/orca-ide')
+    push('/opt/Orca/resources/bin/orca-ide')
+    push('/usr/local/bin/orca')
+  } else {
+    push('/Applications/Orca.app/Contents/Resources/bin/orca')
+    if (env.HOME?.trim()) {
+      push(`${env.HOME.trim().replace(/\/+$/, '')}/Applications/Orca.app/Contents/Resources/bin/orca`)
+    }
+  }
+
+  return candidates
+}
+
+function resolveCliTarget() {
+  const platform = process.platform
+  const found = cliCandidates().find((p) => fs.existsSync(p))
+  if (found) {
+    return { command: found, shell: platform === 'win32' && isBatchFile(found) }
+  }
+  if (platform === 'win32') {
+    return { command: 'orca.exe', shell: false, fallbackCommand: 'orca.cmd' }
+  }
+  if (platform === 'linux') {
+    return { command: 'orca-ide', shell: false, fallbackCommand: 'orca' }
+  }
+  return { command: 'orca', shell: false }
+}
+
+function execCliJson(args, timeout = 8000) {
+  const target = resolveCliTarget()
+  const runOnce = (command, shell) =>
+    new Promise((resolve, reject) => {
+      execFile(
+        command,
+        args,
+        { timeout, maxBuffer: 32 * 1024 * 1024, shell },
+        (error, stdout) => {
+          if (error && !stdout) return reject(error)
+          try {
+            resolve(JSON.parse(stdout))
+          } catch (e) {
+            reject(error ?? e)
+          }
+        }
+      )
+    })
+
+  return runOnce(target.command, target.shell).catch((err) => {
+    if (target.fallbackCommand && (err?.code === 'ENOENT' || err?.code === 'EINVAL')) {
+      return runOnce(target.fallbackCommand, isBatchFile(target.fallbackCommand))
+    }
+    throw err
+  })
 }
 
 function runPs() {
-  return new Promise((resolve, reject) => {
-    execFile(
-      cliPath(),
-      ['worktree', 'ps', '--agent-wait', '--json'],
-      { timeout: 8000, maxBuffer: 32 * 1024 * 1024 },
-      (error, stdout) => {
-        if (error && !stdout) return reject(error)
-        try {
-          resolve(JSON.parse(stdout))
-        } catch (e) {
-          reject(e)
-        }
-      }
-    )
-  })
+  return execCliJson(['worktree', 'ps', '--agent-wait', '--json'])
 }
 
-function switchTerminal(paneKey) {
-  return new Promise((resolve) => {
-    execFile(
-      cliPath(),
-      ['terminal', 'list', '--json'],
-      { timeout: 8000 },
-      (error, stdout) => {
-        if (error || !stdout) return resolve(false)
-        try {
-          const data = JSON.parse(stdout)
-          const terminals = data?.result?.terminals
-          if (Array.isArray(terminals)) {
-            const match = terminals.find((t) => {
-              const tabId = String(t.tabId ?? '')
-              const leafId = String(t.leafId ?? '')
-              const key = `${tabId}:${leafId}`
-              return key === paneKey || tabId === paneKey || leafId === paneKey
-            })
-            if (match && match.handle) {
-              execFile(cliPath(), ['terminal', 'switch', '--terminal', String(match.handle)], (err) => {
-                resolve(!err)
-              })
-              return
-            }
-          }
-          resolve(false)
-        } catch {
-          resolve(false)
-        }
+async function switchTerminal(paneKey) {
+  try {
+    const data = await execCliJson(['terminal', 'list', '--json'])
+    const terminals = data?.result?.terminals
+    if (Array.isArray(terminals)) {
+      const match = terminals.find((t) => {
+        const tabId = String(t.tabId ?? '')
+        const leafId = String(t.leafId ?? '')
+        const key = `${tabId}:${leafId}`
+        return key === paneKey || tabId === paneKey || leafId === paneKey
+      })
+      if (match && match.handle) {
+        await execCliJson(['terminal', 'switch', '--terminal', String(match.handle), '--json'])
+        return true
       }
-    )
-  })
+    }
+    return false
+  } catch {
+    return false
+  }
 }
 
 const str = (v) => (typeof v === 'string' && v.trim() ? v.trim() : null)
