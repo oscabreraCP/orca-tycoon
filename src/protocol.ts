@@ -26,6 +26,8 @@ export type Staff = {
   label: string
   since: number
   specialists: Specialist[]
+  /** True when this agent is leading/orchestrating other workers or child sessions. */
+  isLeader?: boolean
 }
 
 export type Desk = {

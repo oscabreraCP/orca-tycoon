@@ -670,7 +670,13 @@ function assignBreaks(common) {
     const slot = slotOf(seat.key, now)
     const sleepy = LOUNGE_STATES.has(seat.staff.state)
     const e = assigned.get(seat.key)
-    const keep = e && e.slot === slot && e.index < pools[e.kind].length && (sleepy || !e.a.sleepyOnly) && !taken[e.kind].has(e.index)
+    const keep =
+      e &&
+      e.slot === slot &&
+      e.index < pools[e.kind].length &&
+      (sleepy || !e.a.sleepyOnly) &&
+      (!seat.staff.isLeader || e.a.id !== 'nap' || seat.staff.state === 'done') &&
+      !taken[e.kind].has(e.index)
     if (keep) taken[e.kind].add(e.index)
     else {
       assigned.delete(seat.key)
@@ -678,7 +684,12 @@ function assignBreaks(common) {
     }
   }
   const ranked = ({ seat, slot, sleepy }) =>
-    ACTIVITIES.filter((a) => sleepy || !a.sleepyOnly)
+    ACTIVITIES.filter((a) => {
+      if (a.sleepyOnly && !sleepy) return false
+      // Leaders can take calls, coffee/water, play foosball or read, but NEVER sofa nap unless truly done
+      if (seat.staff.isLeader && a.id === 'nap' && seat.staff.state !== 'done') return false
+      return true
+    })
       .map((a, i) => ({ a, score: -Math.log(1e-9 + hashOf(`${seat.key}|${slot}|${i}`)) / a.weight }))
       .sort((x, y) => x.score - y.score)
       .map((r) => r.a)
@@ -1242,7 +1253,7 @@ function bubbleAnchor(key) {
   return w ? { x: w.x + 4, y: w.y - 1 } : { x: seat.x + SEAT_W / 2, y: seat.y }
 }
 
-function drawBubble(anchor, text) {
+function drawBubble(anchor, text, kind = 'speech') {
   const s = layout.scale
   cssTransform()
   ctx.font = `500 12px ui-monospace, 'SF Mono', Menlo, monospace`
@@ -1255,18 +1266,41 @@ function drawBubble(anchor, text) {
   let x = Math.round(cx - w / 2)
   x = Math.max(6, Math.min(x, layout.artW * s - w - 6))
   const y = Math.max(4, Math.round(anchor.y * s - h - 2))
-  ctx.fillStyle = '#e9fbef'
-  ctx.strokeStyle = '#3a8f5c'
-  ctx.lineWidth = 1.5
-  ctx.beginPath()
-  ctx.roundRect(x, y, w, h, 7)
-  ctx.fill()
-  ctx.stroke()
-  ctx.beginPath()
-  ctx.moveTo(cx - 4, y + h)
-  ctx.lineTo(cx, y + h + 6)
-  ctx.lineTo(cx + 4, y + h)
-  ctx.fill()
+
+  if (kind === 'waiting' || kind === 'thought') {
+    // Thought bubble: warm background, golden/amber border and thought dots
+    ctx.fillStyle = '#fff9e6'
+    ctx.strokeStyle = '#f6b23c'
+    ctx.lineWidth = 1.5
+    ctx.beginPath()
+    ctx.roundRect(x, y, w, h, 8)
+    ctx.fill()
+    ctx.stroke()
+
+    // Little thought circles leading to person
+    ctx.beginPath()
+    ctx.arc(cx, y + h + 3, 2.5, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.stroke()
+    ctx.beginPath()
+    ctx.arc(cx - 2, y + h + 7, 1.5, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.stroke()
+  } else {
+    ctx.fillStyle = '#e9fbef'
+    ctx.strokeStyle = '#3a8f5c'
+    ctx.lineWidth = 1.5
+    ctx.beginPath()
+    ctx.roundRect(x, y, w, h, 7)
+    ctx.fill()
+    ctx.stroke()
+    ctx.beginPath()
+    ctx.moveTo(cx - 4, y + h)
+    ctx.lineTo(cx, y + h + 6)
+    ctx.lineTo(cx + 4, y + h)
+    ctx.fill()
+  }
+
   ctx.fillStyle = C.ink
   ctx.textBaseline = 'middle'
   ctx.fillText(label, x + 7, y + h / 2 + 1)
@@ -1329,8 +1363,10 @@ function draw() {
     drawText(room.name, (room.x + 5) * s, (room.y + 6.5) * s, (Math.min(room.w - 40, 56) - 4) * s, C.white, { weight: 700 })
   }
   for (const seat of layout.seats) {
-    const color = seat === seatOf(selected) ? '#2a1f6b' : '#2a2633'
-    drawText(seatLabel(seat), (seat.x + SEAT_W / 2) * s, (seat.y + SEAT_H + 2.5) * s, (DESK_W + 2) * s, color, { align: 'center', size: 10 })
+    const isLead = Boolean(seat.staff.isLeader)
+    const color = seat === seatOf(selected) ? '#2a1f6b' : (isLead ? '#805000' : '#2a2633')
+    const label = (isLead ? '👑 ' : '') + seatLabel(seat)
+    drawText(label, (seat.x + SEAT_W / 2) * s, (seat.y + SEAT_H + 2.5) * s, (DESK_W + 4) * s, color, { align: 'center', size: 10, weight: isLead ? 700 : 600 })
   }
 
   const pickSeat = selected && seatOf(selected)
@@ -1344,10 +1380,21 @@ function draw() {
   const now = Date.now()
   for (const seat of layout.seats) {
     const b = bubbles.get(seat.key)
-    if (seat.key !== selected && b && b.until > now) drawBubble(bubbleAnchor(seat.key), b.text)
+    const isWaiting = seat.staff.state === 'waiting'
+    if (seat.key !== selected) {
+      if (isWaiting) {
+        const text = (b && b.until > now && b.text) ? b.text : '❓ Need you!'
+        drawBubble(bubbleAnchor(seat.key), text, 'waiting')
+      } else if (b && b.until > now) {
+        drawBubble(bubbleAnchor(seat.key), b.text, 'speech')
+      }
+    }
   }
   const anchor = selected && bubbleAnchor(selected)
-  if (anchor) drawBubble(anchor, sayingOf(selected))
+  if (anchor) {
+    const isWaiting = layout.seats.find((u) => u.key === selected)?.staff?.state === 'waiting'
+    drawBubble(anchor, sayingOf(selected), isWaiting ? 'waiting' : 'speech')
+  }
 }
 
 // ---- side text ---------------------------------------------------------------------------------
@@ -1363,13 +1410,16 @@ function renderStats() {
   let busy = 0
   let specialists = 0
   let needYou = 0
+  let leads = 0
   for (const u of layout.seats) {
     if (u.staff.state === 'working' || u.staff.state === 'monitoring') busy++
     if (u.staff.state === 'waiting' || u.staff.state === 'blocked') needYou++
     specialists += activeSpecialists(u.staff).length
+    if (u.staff.isLeader) leads++
   }
   const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`
   const parts = [plural(layout.rooms.length, 'team'), `${layout.seats.length} staff`, `${busy} busy`]
+  if (leads) parts.push(plural(leads, 'lead'))
   if (specialists) parts.push(plural(specialists, 'specialist'))
   if (needYou) parts.push(`${needYou} need you`)
   document.getElementById('stats').textContent = parts.join(' · ')
@@ -1411,6 +1461,46 @@ async function openInOrca(seat) {
   renderDetail()
 }
 
+function findLeaderForSeat(seat) {
+  if (!seat || seat.staff.isLeader) return null
+  const allLeads = layout.seats.filter((s) => s.staff.isLeader)
+  if (allLeads.length === 0) return null
+
+  // 1. Match orchestration run prefix (e.g. orch:19)
+  const orchMatch = (seat.staff.name ?? '').match(/\b(orch:\d+)\b/i)
+  if (orchMatch) {
+    const orchPrefix = orchMatch[1].toLowerCase()
+    const match = allLeads.find((l) => (l.staff.name ?? '').toLowerCase().includes(orchPrefix))
+    if (match) return match
+  }
+
+  // 2. Parent worktree match
+  if (seat.desk.parentId) {
+    const match = allLeads.find((l) => l.desk.id === seat.desk.parentId)
+    if (match) return match
+  }
+
+  // 3. Same room (same project/repo)
+  const sameRoomLeads = allLeads.filter((l) => l.room?.name && l.room.name === seat.room?.name)
+  if (sameRoomLeads.length > 0) return sameRoomLeads[0]
+
+  // 4. Fallback if only 1 lead in whole office
+  if (allLeads.length === 1) return allLeads[0]
+
+  return null
+}
+
+function scrollToSeat(seat) {
+  if (!seat || !layout) return
+  const s = layout.scale
+  const officeRect = office.getBoundingClientRect()
+  const detailBox = document.getElementById('detail')
+  const detailHeight = detailBox && !detailBox.hidden ? detailBox.offsetHeight : 0
+  const visibleHeight = officeRect.height - detailHeight
+  const targetTop = Math.max(0, seat.y * s - visibleHeight / 3)
+  office.scrollTo({ top: targetTop, behavior: 'smooth' })
+}
+
 function renderDetail() {
   const box = document.getElementById('detail')
   const seat = selected && seatOf(selected)
@@ -1421,7 +1511,8 @@ function renderDetail() {
   }
   document.body.classList.add('has-detail')
   const { desk: d, staff, room } = seat
-  const title = staff.name ? staff.name : d.name
+  const isLead = Boolean(staff.isLeader)
+  const title = (isLead ? '👑 ' : '') + (staff.name ? staff.name : d.name)
   const header = el('div', 'title', title)
   header.style.fontWeight = '700'
   header.style.fontSize = '13px'
@@ -1429,6 +1520,7 @@ function renderDetail() {
   header.style.marginBottom = '4px'
 
   const lines = [header]
+  if (isLead) lines.push(el('div', 'row', '👑 <strong>Líder / Coordinador</strong> (orquestando workers)'))
   if (d.host) lines.push(el('div', 'row', `🌐 on ${d.host}`))
   if (room) lines.push(el('div', 'row', `📁 ${room.name} · 🌿 ${d.branch ?? d.name}`))
   lines.push(el('div', 'row', `🤖 ${staff.agent ?? 'agent'} · ${STATE_LABEL[staff.state]} for ${since(staff.since)}`))
@@ -1449,6 +1541,22 @@ function renderDetail() {
     })
     const actions = el('div', 'actions')
     actions.append(button)
+
+    const leaderSeat = findLeaderForSeat(seat)
+    if (leaderSeat) {
+      const leaderBtn = el('button', 'btn-leader', '👑 Ir a líder')
+      leaderBtn.type = 'button'
+      leaderBtn.title = `Ir a líder: ${leaderSeat.staff.name || leaderSeat.desk.name}`
+      leaderBtn.addEventListener('click', (e) => {
+        e.stopPropagation()
+        selected = leaderSeat.key
+        renderDetail()
+        draw()
+        scrollToSeat(leaderSeat)
+      })
+      actions.append(leaderBtn)
+    }
+
     if (state?.text) actions.append(el('span', 'note', state.text))
     lines.push(actions)
   }
@@ -1486,7 +1594,7 @@ function noteChanges() {
     if (primed && prev && prev !== state) {
       let text = null
       if (state === 'done') text = seat.staff.said ?? 'Done!'
-      else if (state === 'waiting') text = 'Need you!'
+      else if (state === 'waiting') text = '❓ Need you!'
       else if (state === 'blocked') text = 'Stuck!'
       if (text) bubbles.set(seat.key, { text, until: now + BUBBLE_MS })
     }
@@ -1572,7 +1680,11 @@ canvas.addEventListener('mousemove', (event) => {
   const hit = targetKey && seatOf(targetKey)
   if (hit) {
     const { desk: d, staff, room } = hit
-    const title = staff.name || d.name
+    const isLead = Boolean(staff.isLeader)
+    const title = (isLead ? '👑 ' : '') + (staff.name || d.name)
+    const leadBadge = isLead
+      ? ` <span style="background:rgba(246,178,60,0.18);color:#f6b23c;border:1px solid rgba(246,178,60,0.4);padding:1px 5px;border-radius:3px;font-size:9.5px;font-weight:700;">👑 LÍDER</span>`
+      : ''
     const stateInfo = `🤖 <strong>${escapeHtml(staff.agent || 'agent')}</strong> · <span style="color:var(--orca-primary,#82aaff)">${escapeHtml(STATE_LABEL[staff.state])}</span> (${since(staff.since)})`
     const hostInfo = d.host ? ` · 🌐 ${escapeHtml(d.host)}` : ''
     const locInfo = `📁 ${escapeHtml(room?.name ?? '')} · 🌿 ${escapeHtml(d.branch || d.name)}${hostInfo}`
@@ -1580,7 +1692,7 @@ canvas.addEventListener('mousemove', (event) => {
     const saidInfo = staff.said ? `<br>💬 <em>"${escapeHtml(staff.said)}"</em>` : ''
     const specInfo = staff.specialists?.length ? `<br>👥 ${escapeHtml(staff.specialists.map((s) => s.role).filter(Boolean).join(', '))}` : ''
 
-    tooltip.innerHTML = `<div style="font-weight:700;margin-bottom:3px;color:var(--orca-foreground,#fff);">${escapeHtml(title)}</div><div style="color:var(--orca-muted-foreground,#9a97a8);font-size:10.5px;">${locInfo}<br>${stateInfo}${toolInfo}${saidInfo}${specInfo}</div>`
+    tooltip.innerHTML = `<div style="font-weight:700;margin-bottom:3px;color:var(--orca-foreground,#fff);">${escapeHtml(title)}${leadBadge}</div><div style="color:var(--orca-muted-foreground,#9a97a8);font-size:10.5px;">${locInfo}<br>${stateInfo}${toolInfo}${saidInfo}${specInfo}</div>`
     tooltip.style.display = 'block'
     const x = Math.min(window.innerWidth - 330, event.clientX + 14)
     const y = Math.min(window.innerHeight - 120, event.clientY + 14)
@@ -1612,8 +1724,17 @@ canvas.addEventListener('click', (event) => {
   if (opening && seatOf(selected)?.key !== opening.key) opening = null
   renderDetail()
   draw()
-  const seat = selected && seatOf(selected)
+})
+
+canvas.addEventListener('dblclick', (event) => {
+  const [ax, ay] = artPoint(event)
+  const hit = whoAt(ax, ay)
+  const seat = hit && seatOf(hit)
   if (seat) {
+    selected = hit
+    if (opening && seatOf(selected)?.key !== opening.key) opening = null
+    renderDetail()
+    draw()
     openInOrca(seat)
   }
 })

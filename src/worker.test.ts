@@ -3,9 +3,11 @@
 import { assert, test } from 'orca/testing'
 import {
   isChatSession,
+  isLeaderStaff,
   labelOf,
   pairedEnvironments,
   readAllHosts,
+  staffState,
   switchTo,
   terminalSwitchArgs,
   toSnapshot,
@@ -120,6 +122,68 @@ test('agents say one short line about what they are doing', () => {
   assert.equal(say({ state: 'waiting', toolName: 'AskUserQuestion' }), 'I have a question for you')
   assert.equal(say({ state: 'blocked' }), "I'm stuck, can you help?")
   assert.equal(say({ state: 'done', lastAssistantMessage: 'Merged #12.\nMore below' }), 'Merged #12.')
+  // leader agent coordinating
+  assert.equal(
+    say({
+      state: 'working',
+      workingMode: 'monitoring',
+      conversationName: 'orch:19 lead ci-levels-three-four'
+    }),
+    "I'm coordinating: waiting on workers and CI"
+  )
+  assert.equal(
+    say({
+      state: 'idle',
+      conversationName: 'orch:19 lead ci-levels-three-four'
+    }),
+    "I'm coordinating: standing by for workers"
+  )
+})
+
+test('identifies leader and coordinator agents while keeping regular workers distinct', () => {
+  // matches orchestration lead pattern
+  assert.equal(
+    isLeaderStaff({ conversationName: 'orch:19 lead ci-levels-three-four P2-3 · 12c40464' }, 'workspace'),
+    true
+  )
+  // matches coordinator
+  assert.equal(isLeaderStaff({ conversationName: 'Stratos coordinator run' }, 'workspace'), true)
+  // matches orchestration prompt
+  assert.equal(
+    isLeaderStaff(
+      { prompt: 'You have 1 orchestration message. Run orca orchestration check --run run_7f54b0161b9a.' },
+      'workspace'
+    ),
+    true
+  )
+  // matches supervisor / orchestrate
+  assert.equal(isLeaderStaff({ displayName: 'release-supervisor' }, 'workspace'), true)
+
+  // regular child workers must NOT be marked as leaders
+  assert.equal(
+    isLeaderStaff({ conversationName: 'orch:19 L34-2a config class vitest nonce:c5885cbee9948521' }, 'workspace'),
+    false
+  )
+  assert.equal(
+    isLeaderStaff(
+      { prompt: 'Read /Users/o.cabrera_cyberpuert/.stratos/orchestrate/briefs/L34-2a.md and execute it.' },
+      'workspace'
+    ),
+    false
+  )
+  assert.equal(isLeaderStaff({ taskTitle: 'Fix cart totals' }, 'feature/cart'), false)
+})
+
+test('staffState classifies waiting on user input or finished process', () => {
+  // agentWait flips working state to waiting
+  assert.equal(staffState({ state: 'working', agentWait: { prompt: 'Do you want to proceed?' } }), 'waiting')
+  assert.equal(staffState({ state: 'working', agentWait: 'waiting for user input' }), 'waiting')
+  // normal working
+  assert.equal(staffState({ state: 'working', agentWait: null }), 'working')
+  // monitoring
+  assert.equal(staffState({ state: 'working', workingMode: 'monitoring' }), 'monitoring')
+  // programStatus done while state was left as working
+  assert.equal(staffState({ state: 'working', programStatus: { state: 'done' } }), 'done')
 })
 
 test('a seat is labelled by ticket, issue number, its own name, or the title when its name is generic', () => {
@@ -355,9 +419,9 @@ test('asks every paired server, and a server that fails costs only its own desks
   )
   assert.equal(local, LOCAL_PS)
   assert.deepEqual(calls, [
-    ['worktree', 'ps', '--json'],
-    ['worktree', 'ps', '--json', '--environment', 'aaa'],
-    ['worktree', 'ps', '--json', '--environment', 'bbb']
+    ['worktree', 'ps', '--agent-wait', '--json'],
+    ['worktree', 'ps', '--agent-wait', '--json', '--environment', 'aaa'],
+    ['worktree', 'ps', '--agent-wait', '--json', '--environment', 'bbb']
   ])
   // this machine keeps the default wait; a server gets a shorter one
   assert.equal(timeouts[0], undefined)
