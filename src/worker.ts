@@ -7,23 +7,99 @@ import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import type { Desk, Floor, OfficeSnapshot, Specialist, Staff, StaffState, SwitchOutcome } from './protocol'
 
-const CLI_CANDIDATES = [
-  '/Applications/Orca.app/Contents/Resources/bin/orca',
-  `${process.env.HOME ?? ''}/Applications/Orca.app/Contents/Resources/bin/orca`
-]
 const CLI_TIMEOUT_MS = 8000
 // a paired server gets less, so this machine's call plus the slowest server's stay under the
 // panel's 15 s wait for a snapshot
 const SERVER_TIMEOUT_MS = 5000
 
-function cliPath(): string {
-  return CLI_CANDIDATES.find((p) => existsSync(p)) ?? 'orca'
+export type CliLookupEnv = {
+  platform?: string
+  env?: Record<string, string | undefined>
+  resourcesPath?: string | null
+  exists?: (path: string) => boolean
 }
 
-/** Runs the CLI with an argument array (never a shell) and parses its JSON answer. */
-function runCli(args: string[], timeout = CLI_TIMEOUT_MS): Promise<unknown> {
+export type CliTarget = {
+  command: string
+  shell: boolean
+  fallbackCommand?: string
+}
+
+const isBatchFile = (command: string): boolean => /\.(?:cmd|bat)$/i.test(command)
+
+export function cliCandidates(options: CliLookupEnv = {}): string[] {
+  const platform = options.platform ?? process.platform
+  const env = options.env ?? process.env
+  const resourcesPath =
+    options.resourcesPath !== undefined
+      ? options.resourcesPath
+      : ((process as { resourcesPath?: string }).resourcesPath ?? null)
+  const candidates: string[] = []
+  const push = (p: string | null | undefined) => {
+    const trimmed = p?.trim()
+    if (trimmed && !candidates.includes(trimmed)) candidates.push(trimmed)
+  }
+
+  push(env.ORCA_CLI_COMMAND)
+
+  if (resourcesPath) {
+    if (platform === 'win32') {
+      push(`${resourcesPath}\\bin\\orca.exe`)
+      push(`${resourcesPath}\\bin\\orca.cmd`)
+    } else if (platform === 'linux') {
+      push(`${resourcesPath}/bin/orca-ide`)
+      push(`${resourcesPath}/bin/orca`)
+    } else {
+      push(`${resourcesPath}/bin/orca`)
+    }
+  }
+
+  if (platform === 'win32') {
+    const roots = [
+      env.LOCALAPPDATA,
+      env.USERPROFILE ? `${env.USERPROFILE}\\AppData\\Local` : undefined,
+      env.PROGRAMFILES,
+      env['PROGRAMFILES(X86)']
+    ]
+    for (const root of roots) {
+      if (!root?.trim()) continue
+      const base = root.trim().replace(/[\\/]+$/, '')
+      push(`${base}\\Programs\\Orca\\resources\\bin\\orca.exe`)
+      push(`${base}\\Programs\\orca\\resources\\bin\\orca.exe`)
+      push(`${base}\\Orca\\resources\\bin\\orca.exe`)
+      push(`${base}\\Programs\\Orca\\resources\\bin\\orca.cmd`)
+      push(`${base}\\orca\\bin\\orca.cmd`)
+    }
+  } else if (platform === 'linux') {
+    push('/usr/local/bin/orca')
+    push('/usr/bin/orca-ide')
+    push('/usr/bin/orca')
+  } else {
+    push('/Applications/Orca.app/Contents/Resources/bin/orca')
+    if (env.HOME?.trim()) {
+      push(`${env.HOME.trim().replace(/\/+$/, '')}/Applications/Orca.app/Contents/Resources/bin/orca`)
+    }
+  }
+
+  return candidates
+}
+
+export function resolveCliTarget(options: CliLookupEnv = {}): CliTarget {
+  const platform = options.platform ?? process.platform
+  const exists = options.exists ?? existsSync
+  const found = cliCandidates(options).find((p) => exists(p))
+  if (found) {
+    return { command: found, shell: platform === 'win32' && isBatchFile(found) }
+  }
+  if (platform === 'win32') {
+    return { command: 'orca.exe', shell: false, fallbackCommand: 'orca.cmd' }
+  }
+  return { command: 'orca', shell: false }
+}
+
+function execCliFile(command: string, args: string[], timeout: number, shell: boolean): Promise<unknown> {
   return new Promise((resolve, reject) => {
-    execFile(cliPath(), args, { timeout, maxBuffer: 32 * 1024 * 1024 }, (error, stdout) => {
+    execFile(command, args, { timeout, maxBuffer: 32 * 1024 * 1024, shell }, (error, stdout) => {
       if (error && !stdout) return reject(error)
       let parsed: unknown
       try {
@@ -39,6 +115,20 @@ function runCli(args: string[], timeout = CLI_TIMEOUT_MS): Promise<unknown> {
       resolve(parsed)
     })
   })
+}
+
+/** Runs the CLI with an argument array and parses its JSON answer. */
+async function runCli(args: string[], timeout = CLI_TIMEOUT_MS): Promise<unknown> {
+  const target = resolveCliTarget()
+  try {
+    return await execCliFile(target.command, args, timeout, target.shell)
+  } catch (error) {
+    const code = (error as { code?: string } | null)?.code
+    if (target.fallbackCommand && (code === 'ENOENT' || code === 'EINVAL')) {
+      return execCliFile(target.fallbackCommand, args, timeout, isBatchFile(target.fallbackCommand))
+    }
+    throw error
+  }
 }
 
 type Row = Record<string, unknown>
@@ -158,10 +248,17 @@ const clip = (text: string, max = 24): string => (text.length > max ? `${text.sl
 function mainCommand(command: string): string {
   const parts = command.split(/\s*(?:&&|\|\||;|\n)\s*/).map((p) => p.trim()).filter(Boolean)
   const strip = (p: string) =>
-    p.replace(/^(?:[A-Z_][A-Z0-9_]*=\S*\s+)+/, '').replace(/^(?:sudo|time|timeout\s+\S+|npx|bunx|exec)\s+/, '')
+    p
+      .replace(/^&\s+/, '')
+      .replace(/^(?:[A-Z_][A-Z0-9_]*=\S*\s+)+/, '')
+      .replace(/^(?:sudo|time|timeout\s+\S+|npx|bunx|exec)\s+/, '')
   const real = parts.map(strip).filter((p) => !/^(?:cd|export|set|source|\.|echo|true|O=|mkdir)\b/.test(p))
-  // /Applications/Orca.app/.../bin/orca reads as orca
-  return (real[0] ?? strip(parts[0] ?? '')).replace(/^\S*\//, '')
+  const selected = real[0] ?? strip(parts[0] ?? '')
+  // /Applications/Orca.app/.../bin/orca and C:\...\bin\orca.exe read as orca / orca.exe
+  return selected
+    .replace(/^"([^"]*[/\\])([^"/\\]+)"/, '$2')
+    .replace(/^'([^']*[/\\])([^'/\\]+)'/, '$2')
+    .replace(/^\S*[/\\]/, '')
 }
 
 const COMMAND_LINES: [RegExp, string][] = [
@@ -190,7 +287,7 @@ const COMMAND_LINES: [RegExp, string][] = [
   [/^sleep\b/, "I'm giving it a moment"],
   [/^(?:psql|supabase|sqlite3|mysql|prisma)\b/, "I'm checking the database"],
   [/^(?:docker|kubectl|terraform|tofu|vercel|fly|render)\b/, "I'm working on the infra"],
-  [/^orca\b/, "I'm talking to Orca"],
+  [/^orca(?:-ide)?(?:\.(?:exe|cmd))?\b/i, "I'm talking to Orca"],
   [/^(?:rg|grep|find|fd|ls|tree|cat|head|tail|sed|awk|wc|jq|less)\b/, "I'm looking through the code"],
   [/^(?:rm|mv|cp|chmod|ln)\b/, "I'm tidying files"],
   [/^(?:python3?|node|ruby|bash|sh|zsh|deno|bun|tsx)\b/, "I'm running a script"],

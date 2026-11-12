@@ -2,11 +2,13 @@
 // an agent's pane key to the CLI call that brings it to the front.
 import { assert, test } from 'orca/testing'
 import {
+  cliCandidates,
   isChatSession,
   isLeaderStaff,
   labelOf,
   pairedEnvironments,
   readAllHosts,
+  resolveCliTarget,
   staffState,
   switchTo,
   terminalSwitchArgs,
@@ -106,7 +108,10 @@ test('agents say one short line about what they are doing', () => {
   assert.equal(bash('pnpm -F web lint'), "I'm running the checks")
   assert.equal(bash('make deploy'), "I'm running make")
   assert.equal(bash('/Applications/Orca.app/Contents/Resources/bin/orca worktree ps --json'), "I'm talking to Orca")
+  assert.equal(bash('C:\\Users\\dev\\AppData\\Local\\Programs\\Orca\\resources\\bin\\orca.exe worktree ps --json'), "I'm talking to Orca")
+  assert.equal(bash('& "C:\\Program Files\\Orca\\resources\\bin\\orca.cmd" worktree ps --json'), "I'm talking to Orca")
   assert.equal(say({ state: 'working', toolName: 'Edit', toolInput: '/Users/x/app/src/panel.js' }), "I'm editing panel.js")
+  assert.equal(say({ state: 'working', toolName: 'Edit', toolInput: 'C:\\Users\\x\\app\\src\\panel.js' }), "I'm editing panel.js")
   assert.equal(say({ state: 'working', toolName: 'Read', toolInput: 'src/worker.ts' }), "I'm reading worker.ts")
   assert.equal(say({ state: 'working', toolName: 'Grep', toolInput: 'lineOf' }), "I'm searching the code")
   assert.equal(say({ state: 'working', toolName: 'WebFetch', toolInput: 'https://www.onorca.dev/plugins' }), "I'm reading onorca.dev")
@@ -465,4 +470,63 @@ test('switchTo reaches a paired server through its selector, and only one Orca l
     assert.equal(out.ok, false, `accepted ${JSON.stringify(environment)}`)
   }
   assert.deepEqual(calls, [])
+})
+
+test('resolves the Orca CLI across macOS, Windows and Linux with safe shell handling', () => {
+  // Windows: finds orca.exe under %LOCALAPPDATA%\Programs\Orca\resources\bin without shell
+  const winExe = 'C:\\Users\\dev\\AppData\\Local\\Programs\\Orca\\resources\\bin\\orca.exe'
+  assert.deepEqual(
+    resolveCliTarget({
+      platform: 'win32',
+      env: { LOCALAPPDATA: 'C:\\Users\\dev\\AppData\\Local' },
+      resourcesPath: null,
+      exists: (p) => p === winExe
+    }),
+    { command: winExe, shell: false }
+  )
+
+  // Windows: enables shell when the resolved launcher is a .cmd batch shim
+  const winCmd = 'C:\\Users\\dev\\AppData\\Local\\orca\\bin\\orca.cmd'
+  assert.deepEqual(
+    resolveCliTarget({
+      platform: 'win32',
+      env: { LOCALAPPDATA: 'C:\\Users\\dev\\AppData\\Local' },
+      resourcesPath: null,
+      exists: (p) => p === winCmd
+    }),
+    { command: winCmd, shell: true }
+  )
+
+  // Windows: when no candidate exists on disk, falls back to orca.exe then orca.cmd on PATH
+  assert.deepEqual(
+    resolveCliTarget({
+      platform: 'win32',
+      env: {},
+      resourcesPath: null,
+      exists: () => false
+    }),
+    { command: 'orca.exe', shell: false, fallbackCommand: 'orca.cmd' }
+  )
+
+  // Electron worker resourcesPath wins before OS install directories
+  const bundledWin = 'D:\\Orca\\resources\\bin\\orca.exe'
+  assert.equal(
+    cliCandidates({
+      platform: 'win32',
+      env: { LOCALAPPDATA: 'C:\\Users\\dev\\AppData\\Local' },
+      resourcesPath: 'D:\\Orca\\resources'
+    })[0],
+    bundledWin
+  )
+
+  // macOS: checks /Applications/Orca.app first and falls back to plain orca
+  assert.deepEqual(
+    resolveCliTarget({
+      platform: 'darwin',
+      env: { HOME: '/Users/dev' },
+      resourcesPath: null,
+      exists: () => false
+    }),
+    { command: 'orca', shell: false }
+  )
 })

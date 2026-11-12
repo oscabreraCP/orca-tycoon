@@ -17,9 +17,18 @@ In Orca, open **Settings → Plugins**, and install **Orca Tycoon** (`palulabs.o
 
 To run it from a clone or development folder instead:
 
+**macOS / Linux:**
 ```sh
 git clone https://github.com/cyberpuerta/orca-tycoon.git ~/projects/orca-tycoon
 cd ~/projects/orca-tycoon
+orca plugin dev load .        # prints an approval; re-run with the --approve flag it shows
+orca plugin open local.office-tycoon --panel office
+```
+
+**Windows (PowerShell):**
+```powershell
+git clone https://github.com/cyberpuerta/orca-tycoon.git "$HOME\projects\orca-tycoon"
+cd "$HOME\projects\orca-tycoon"
 orca plugin dev load .        # prints an approval; re-run with the --approve flag it shows
 orca plugin open local.office-tycoon --panel office
 ```
@@ -32,8 +41,7 @@ orca plugin open local.office-tycoon --panel office
 - **Safe Selection & Double-Click to Switch:** Single click selects the desk and opens details without switching tabs in Orca. Double-clicking any desk (or clicking `[ ↗ Abrir pestaña en Orca ]` in details) switches to that terminal tab.
 - **Standalone Local Server (Optional):** Run `node server.mjs` to view Tycoon at `http://localhost:3456` or in an Orca browser tab (`orca tab create --url http://127.0.0.1:3456`).
 
-The worker looks for the Orca CLI at `/Applications/Orca.app/Contents/Resources/bin/orca`, then
-`~/Applications/...`, then `orca` on your `PATH`.
+The worker resolves the Orca CLI automatically from `ORCA_CLI_COMMAND`, Orca's bundled `resources/bin`, standard macOS (`/Applications/Orca.app/...`), Windows (`%LOCALAPPDATA%\Programs\Orca\resources\bin\orca.exe`), and Linux install locations, or `orca` / `orca.exe` / `orca.cmd` on your `PATH`.
 
 ## Who works here
 
