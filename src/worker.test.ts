@@ -11,6 +11,7 @@ import {
   switchTo,
   terminalSwitchArgs,
   toSnapshot,
+  waitingReplyPrompt,
   worktreeActivateArgs
 } from './worker'
 
@@ -184,6 +185,49 @@ test('staffState classifies waiting on user input or finished process', () => {
   assert.equal(staffState({ state: 'working', workingMode: 'monitoring' }), 'monitoring')
   // programStatus done while state was left as working
   assert.equal(staffState({ state: 'working', programStatus: { state: 'done' } }), 'done')
+  // finished turn whose reply ends with a decision request ('necesito:', pipeline pause, or question)
+  const pipelinePause = {
+    state: 'done',
+    programStatus: { state: 'done' },
+    lastAssistantMessage:
+      'El pipeline se detuvo y pide una decisión tuya antes de seguir.\n\nnecesito: tu visto bueno para volver a correr las pruebas.'
+  }
+  assert.equal(staffState(pipelinePause), 'waiting')
+  assert.equal(waitingReplyPrompt(pipelinePause), 'necesito: tu visto bueno para volver a correr las pruebas.')
+  assert.equal(
+    staffState({
+      state: 'working',
+      programStatus: { state: 'done' },
+      lastAssistantMessage: 'Summary ready.\n\nShould I open the PR now?'
+    }),
+    'waiting'
+  )
+  // active working or monitoring turns ignore stale lastAssistantMessage questions
+  assert.equal(
+    staffState({
+      state: 'working',
+      programStatus: { state: 'working' },
+      lastAssistantMessage: 'necesito: tu visto bueno.'
+    }),
+    'working'
+  )
+  assert.equal(
+    staffState({
+      state: 'working',
+      workingMode: 'monitoring',
+      programStatus: { state: 'done' },
+      lastAssistantMessage: 'necesito: tu visto bueno.'
+    }),
+    'monitoring'
+  )
+  // routine finished reply without decision request stays done
+  assert.equal(
+    staffState({
+      state: 'done',
+      lastAssistantMessage: 'Ya quedó aplicado el arreglo.\n\nsigo con: GMC-10b hasta su PR.'
+    }),
+    'done'
+  )
 })
 
 test('a seat is labelled by ticket, issue number, its own name, or the title when its name is generic', () => {

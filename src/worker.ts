@@ -92,6 +92,44 @@ export async function readAllHosts(
   return { local, servers: answers.filter((a): a is ServerAnswer => a !== null) }
 }
 
+const NEED_YOU_LINE =
+  /^(?:necesito\s*:|necesito\s+(?:tu|su|que|saber|confirmar|definir|decidir|autorizaci[oó]n|visto)\b|need\s+from\s+you\s*:|(?:waiting|awaiting)\s+(?:for|on)\s+your\b)/i
+const PIPELINE_WAIT_LINE =
+  /\b(?:el\s+pipeline\s+se\s+detuvo\s+y\s+pide\s+una\s+decisi[oó]n|pide\s+una\s+decisi[oó]n\s+tuya|a\s+human\s+decides\s+the\s+next\s+step|waiting_for_person)\b/i
+
+function cleanReplyLine(line: string): string {
+  return line
+    .replace(/^(?:[-*>•]+\s*)+/, '')
+    .replace(/\*\*|__/g, '')
+    .trim()
+}
+
+/**
+ * Extracts the prompt when a finished turn's reply asks the user for a decision in prose
+ * (e.g. a closing `necesito: ...` line, a pipeline pause notice, or a final question).
+ */
+export function waitingReplyPrompt(row: Row): string | null {
+  const msg = str(row.lastAssistantMessage)
+  if (!msg) return null
+  const lines = msg
+    .split('\n')
+    .map(cleanReplyLine)
+    .filter(Boolean)
+  if (lines.length === 0) return null
+
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (NEED_YOU_LINE.test(lines[i])) return lines[i].slice(0, 120)
+  }
+  const last = lines[lines.length - 1]
+  if (!last.startsWith('#') && /\?\s*["'»)]*$/.test(last)) {
+    return last.slice(0, 120)
+  }
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (PIPELINE_WAIT_LINE.test(lines[i])) return lines[i].slice(0, 120)
+  }
+  return null
+}
+
 export function staffState(row: Row): StaffState {
   if (row.agentWait != null && (typeof row.agentWait !== 'object' || Object.keys(row.agentWait).length > 0)) {
     return 'waiting'
@@ -100,11 +138,15 @@ export function staffState(row: Row): StaffState {
   if (state === 'working') {
     if (row.workingMode !== 'monitoring' && row.programStatus && typeof row.programStatus === 'object') {
       const prog = (row.programStatus as Row).state
-      if (prog && prog !== 'working') return prog === 'done' ? 'done' : 'idle'
+      if (prog && prog !== 'working') {
+        if (prog === 'done' && waitingReplyPrompt(row)) return 'waiting'
+        return prog === 'done' ? 'done' : 'idle'
+      }
     }
     return row.workingMode === 'monitoring' ? 'monitoring' : 'working'
   }
-  if (state === 'waiting' || state === 'blocked' || state === 'done') return state
+  if (state === 'waiting' || state === 'blocked') return state
+  if (state === 'done') return waitingReplyPrompt(row) ? 'waiting' : 'done'
   return 'idle'
 }
 
@@ -267,7 +309,11 @@ export function isLeaderStaff(row: Row, deskName: string): boolean {
 export function lineOf(row: Row, state: StaffState, specialists: Specialist[], isLeader = false): string {
   const busy = specialists.filter((s) => s.state !== 'done' && s.state !== 'idle')
   if (state === 'waiting') {
-    const prompt = str(row.agentWaitPrompt) ?? str((row.agentWait as Row)?.prompt) ?? str((row.agentWait as Row)?.message)
+    const prompt =
+      str(row.agentWaitPrompt) ??
+      str((row.agentWait as Row)?.prompt) ??
+      str((row.agentWait as Row)?.message) ??
+      waitingReplyPrompt(row)
     if (prompt) return prompt
     return /ask/i.test(String(row.toolName ?? '')) ? 'I have a question for you' : 'I need your input'
   }

@@ -1577,7 +1577,8 @@ function renderDetail() {
   lines.push(el('div', 'row', `🤖 ${staff.agent ?? 'agent'} · ${STATE_LABEL[staff.state]} for ${since(staff.since)}`))
   if (staff.tool && staff.state === 'working') lines.push(el('div', 'row', `⚡ using ${staff.tool}`))
   if (staff.task && staff.task !== staff.name) lines.push(el('div', 'row', `📋 ${staff.task}`))
-  if (staff.said) lines.push(el('div', 'row', `💬 "${staff.said}"`))
+  if (staff.state === 'waiting' && staff.line) lines.push(el('div', 'row', `🙋 ${staff.line}`))
+  if (staff.said && staff.said !== staff.line) lines.push(el('div', 'row', `💬 "${staff.said}"`))
   for (const sp of activeSpecialists(staff)) {
     lines.push(el('div', 'row', `👥 ${sp.role ?? 'specialist'}: ${sp.task ?? ''} (${STATE_LABEL[sp.state]})`))
   }
@@ -1740,10 +1741,11 @@ canvas.addEventListener('mousemove', (event) => {
     const hostInfo = d.host ? ` · 🌐 ${escapeHtml(d.host)}` : ''
     const locInfo = `📁 ${escapeHtml(room?.name ?? '')} · 🌿 ${escapeHtml(d.branch || d.name)}${hostInfo}`
     const toolInfo = staff.tool && staff.state === 'working' ? `<br>⚡ using <code>${escapeHtml(staff.tool)}</code>` : ''
-    const saidInfo = staff.said ? `<br>💬 <em>"${escapeHtml(staff.said)}"</em>` : ''
+    const waitInfo = staff.state === 'waiting' && staff.line ? `<br>🙋 <strong>${escapeHtml(staff.line)}</strong>` : ''
+    const saidInfo = staff.said && staff.said !== staff.line ? `<br>💬 <em>"${escapeHtml(staff.said)}"</em>` : ''
     const specInfo = staff.specialists?.length ? `<br>👥 ${escapeHtml(staff.specialists.map((s) => s.role).filter(Boolean).join(', '))}` : ''
 
-    tooltip.innerHTML = `<div style="font-weight:700;margin-bottom:3px;color:var(--orca-foreground,#fff);">${escapeHtml(title)}${leadBadge}</div><div style="color:var(--orca-muted-foreground,#9a97a8);font-size:10.5px;">${locInfo}<br>${stateInfo}${toolInfo}${saidInfo}${specInfo}</div>`
+    tooltip.innerHTML = `<div style="font-weight:700;margin-bottom:3px;color:var(--orca-foreground,#fff);">${escapeHtml(title)}${leadBadge}</div><div style="color:var(--orca-muted-foreground,#9a97a8);font-size:10.5px;">${locInfo}<br>${stateInfo}${toolInfo}${waitInfo}${saidInfo}${specInfo}</div>`
     tooltip.style.display = 'block'
     const x = Math.min(window.innerWidth - 330, event.clientX + 14)
     const y = Math.min(window.innerHeight - 120, event.clientY + 14)
