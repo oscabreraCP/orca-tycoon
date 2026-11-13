@@ -71,6 +71,13 @@ export function getTheme() {
   return currentTheme
 }
 
+/** The Christmas look is offered from 15 November through 1 January, by the viewer's local date. */
+export function inChristmasSeason(date = new Date()) {
+  const month = date.getMonth()
+  const day = date.getDate()
+  return (month === 10 && day >= 15) || month === 11 || (month === 0 && day === 1)
+}
+
 export const XMAS = {
   santaRed: '#d62828',
   santaDark: '#9e1b1b',

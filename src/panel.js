@@ -24,6 +24,7 @@ import {
   getTheme,
   glyph,
   holidayLights,
+  inChristmasSeason,
   kitchen,
   lounger,
   lounge,
@@ -112,18 +113,32 @@ const ctx = canvas.getContext('2d')
 const tooltip = document.getElementById('tooltip')
 const dpr = () => window.devicePixelRatio || 1
 
+// The theme picker shows only in the Christmas season (15 Nov to 1 Jan); outside it the office is
+// plain. A pick made in season is remembered, when the panel may use storage at all.
+const THEME_KEY = 'orca-tycoon-theme'
 const themeSelect = document.getElementById('theme-select')
-const savedTheme = localStorage.getItem('orca-tycoon-theme') || 'christmas'
-setTheme(savedTheme)
-if (themeSelect) {
-  themeSelect.value = getTheme()
-  themeSelect.addEventListener('change', (e) => {
-    const nextTheme = e.target.value
-    setTheme(nextTheme)
-    localStorage.setItem('orca-tycoon-theme', nextTheme)
-    draw()
-  })
+let pickedTheme = null
+try {
+  pickedTheme = localStorage.getItem(THEME_KEY)
+} catch {}
+function applySeason() {
+  const season = inChristmasSeason()
+  setTheme(season ? pickedTheme ?? 'christmas' : 'normal')
+  if (themeSelect) {
+    themeSelect.hidden = !season
+    themeSelect.value = getTheme()
+  }
 }
+applySeason()
+setInterval(applySeason, 60_000) // an office left open crosses into or out of the season
+themeSelect?.addEventListener('change', (e) => {
+  setTheme(e.target.value)
+  pickedTheme = getTheme()
+  try {
+    localStorage.setItem(THEME_KEY, pickedTheme)
+  } catch {}
+  draw()
+})
 
 let snapshot = null
 let layout = { artW: 0, artH: 0, scale: 3, building: null, rooms: [], seats: [], common: null }

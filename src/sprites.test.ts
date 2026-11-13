@@ -1,7 +1,7 @@
 // The glyph table behind the pixel markers: every character the panel and the sprites draw must
 // have a 3 x 5 bitmap, or glyph() silently paints nothing.
 import { assert, test } from 'orca/testing'
-import { C, GLYPHS, XMAS, christmasTree, costumeOf, getTheme, glyph, holidayLights, look, setTheme, workstation } from './sprites.js'
+import { C, GLYPHS, XMAS, christmasTree, costumeOf, getTheme, glyph, holidayLights, inChristmasSeason, look, setTheme, workstation } from './sprites.js'
 
 test('every glyph the office draws exists and is 3 x 5', () => {
   for (const ch of ['?', '!', 'z', '+']) {
@@ -79,4 +79,14 @@ test('a waiting agent paints an animated question mark overhead', () => {
   assert.equal(px.get('17,0'), C.amber)
   // nothing is painted above the seat's own cell, into the row above
   assert.ok([...px.keys()].every((k) => Number(k.split(',')[1]) >= 0))
+})
+
+test('the christmas theme is offered from 15 November through 1 January only', () => {
+  const on = (y: number, m: number, d: number) => inChristmasSeason(new Date(y, m - 1, d, 12))
+  assert.equal(on(2026, 11, 14), false)
+  assert.equal(on(2026, 11, 15), true)
+  assert.equal(on(2026, 12, 31), true)
+  assert.equal(on(2027, 1, 1), true)
+  assert.equal(on(2027, 1, 2), false)
+  assert.equal(on(2027, 7, 1), false)
 })
