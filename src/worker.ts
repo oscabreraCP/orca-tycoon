@@ -198,9 +198,9 @@ export async function readAllHosts(
 }
 
 const NEED_YOU_LINE =
-  /^(?:necesito\s*:|necesito\s+(?:tu|su)\s+(?:confirmaci[oó]n|aprobaci[oó]n|decisi[oó]n|visto\s+bueno|autorizaci[oó]n|s[ií]|ok|okay|respuesta|indicaci[oó]n)\b|necesito\s+que\s+(?:confirmes|decidas|apruebes|autorices|indiques|elijas|me\s+digas)\b|(?:espero|esperando)\s+(?:tu|su)\s+(?:confirmaci[oó]n|aprobaci[oó]n|decisi[oó]n|visto\s+bueno|autorizaci[oó]n|respuesta|indicaci[oó]n)\b|(?:need|needed|need\s+from\s+you|what\s+i\s+need|decision\s+needed|input\s+needed|action\s+needed|waiting\s+on\s+you)\s*:|(?:i\s+)?need\s+your\s+(?:confirmation|approval|decision|input|go-ahead|sign-off|ok|okay|permission|direction|ruling|answer|reply|response)\b|(?:waiting|awaiting)\s+(?:for|on)\s+your\s+(?:confirmation|approval|decision|input|go-ahead|sign-off|ok|okay|permission|direction|ruling|answer|reply|response)\b|please\s+(?:confirm|decide|approve|let\s+me\s+know\s+whether)\b)/i
+  /^(?:necesito\s*:|necesito\s+(?:tu|su)\s+(?:confirmaci[oó]n|aprobaci[oó]n|decisi[oó]n|visto\s+bueno|autorizaci[oó]n|s[ií]|ok|okay|respuesta|indicaci[oó]n)\b|necesito\s+que\s+(?:confirmes|decidas|apruebes|autorices|indiques|elijas|me\s+digas|llenes|pases|compartas|definas|revises)\b|(?:espero|esperando)\s+(?:tu|su)\s+(?:confirmaci[oó]n|aprobaci[oó]n|decisi[oó]n|visto\s+bueno|autorizaci[oó]n|respuesta|indicaci[oó]n)\b|(?:need|needed|need\s+from\s+you|what\s+i\s+need|decision\s+needed|input\s+needed|action\s+needed|waiting\s+on\s+you)\s*:|(?:i\s+)?need\s+your\s+(?:confirmation|approval|decision|input|go-ahead|sign-off|ok|okay|permission|direction|ruling|answer|reply|response)\b|(?:waiting|awaiting)\s+(?:for|on)\s+your\s+(?:confirmation|approval|decision|input|go-ahead|sign-off|ok|okay|permission|direction|ruling|answer|reply|response)\b|please\s+(?:confirm|decide|approve|open\s+the\s+plan|let\s+me\s+know\s+whether)\b)/i
 const PIPELINE_WAIT_LINE =
-  /\b(?:el\s+pipeline\s+se\s+detuvo\s+y\s+pide\s+una\s+decisi[oó]n|pide\s+una\s+decisi[oó]n\s+tuya|a\s+human\s+decides\s+the\s+next\s+step|waiting_for_person)\b/i
+  /\b(?:el\s+pipeline\s+se\s+detuvo\s+y\s+pide\s+una\s+decisi[oó]n|pide\s+una\s+decisi[oó]n\s+tuya|a\s+human\s+decides\s+the\s+next\s+step|waiting_for_person|reply\s+to\s+it\s+now\s+counts\s+as\s+the\s+approval|open\s+the\s+plan\s+file\s+and\s+approve\s+it|tu\s+respuesta\s+ahora\s+cuenta\s+como\s+la\s+aprobaci[oó]n)\b/i
 
 function cleanReplyLine(line: string): string {
   return line
@@ -213,6 +213,7 @@ export type RunStopWait = {
   subject: string | null
   reasonText: string | null
   transcriptTail: string
+  tabId?: string | null
 }
 
 const TAIL_BYTES = 32 * 1024
@@ -240,18 +241,21 @@ function readTail(filePath: string): string {
 }
 
 /**
- * Reads `~/.stratos/run-stops/*.json` (the same ledger Claude's statusline reads for `🙋 te necesita`)
- * and returns the latest record per session when that session is currently stopped in `waiting_for_person`.
+ * Reads `~/.stratos/run-stops/*.json` (for `🙋 te necesita`) and
+ * `~/.stratos/portfolio/fleet-pane-cache/v2/docs/*.json` (for orchestrate `Needs you: N`)
+ * and returns active records currently waiting on the human operator.
  */
 export function readWaitingRunStops(): RunStopWait[] {
   const root = process.env.STRATOS_STORE_ROOT ?? process.env.HOME ?? ''
   if (!root) return []
+  const out: RunStopWait[] = []
+
   const dir = join(root, '.stratos', 'run-stops')
   let files: string[] = []
   try {
     files = readdirSync(dir).filter((f) => f.endsWith('.json'))
   } catch {
-    return []
+    files = []
   }
   const latestBySession = new Map<string, Row>()
   for (const file of files) {
@@ -267,7 +271,6 @@ export function readWaitingRunStops(): RunStopWait[] {
       // ignore unreadable record
     }
   }
-  const out: RunStopWait[] = []
   for (const rec of latestBySession.values()) {
     if (rec.state !== 'stopped' || rec.stop_reason !== 'waiting_for_person') continue
     const transcriptPath = str(rec.owner_transcript_path)
@@ -278,11 +281,54 @@ export function readWaitingRunStops(): RunStopWait[] {
       transcriptTail
     })
   }
+
+  const fleetDir = join(root, '.stratos', 'portfolio', 'fleet-pane-cache', 'v2', 'docs')
+  let fleetFiles: string[] = []
+  try {
+    fleetFiles = readdirSync(fleetDir).filter((f) => f.endsWith('.json'))
+  } catch {
+    fleetFiles = []
+  }
+  for (const file of fleetFiles) {
+    try {
+      const doc = JSON.parse(readFileSync(join(fleetDir, file), 'utf8')) as Row
+      const scope = doc.scope as Row | undefined
+      if (scope?.state !== 'bound') continue
+      const tabId = str(scope.tab_id)
+      if (!tabId) continue
+      const runs = Array.isArray(doc.runs) ? (doc.runs as Row[]) : []
+      const liveRunIds = new Set(
+        runs.filter((r) => r.execution !== 'ended').map((r) => str(r.run_id)).filter((id): id is string => Boolean(id))
+      )
+      if (liveRunIds.size === 0) continue
+      const needsYou = doc.needs_you as Row | undefined
+      const items = Array.isArray(needsYou?.items) ? (needsYou.items as Row[]) : []
+      const humanItem = items.find((item) => item.owner === 'human' && liveRunIds.has(str(item.run_id) ?? ''))
+      if (!humanItem) continue
+      const action = str(humanItem.action)
+      out.push({
+        subject: null,
+        reasonText: action ? `Needs you: ${action}` : 'Needs your decision on the plan',
+        transcriptTail: '',
+        tabId
+      })
+    } catch {
+      // ignore unreadable fleet doc
+    }
+  }
+
   return out
 }
 
 function matchRunStop(row: Row, runStops: readonly RunStopWait[]): RunStopWait | null {
   if (runStops.length === 0) return null
+  const paneKey = str(row.paneKey) ?? ''
+  const rowTabId = paneKey.split(':')[0] ?? ''
+  if (rowTabId) {
+    for (const stop of runStops) {
+      if (stop.tabId && stop.tabId === rowTabId) return stop
+    }
+  }
   const msg = str(row.lastAssistantMessage)
   const firstLine = msg?.split('\n')[0]?.trim() ?? ''
   const probe = firstLine.slice(0, 60)
@@ -297,7 +343,7 @@ function matchRunStop(row: Row, runStops: readonly RunStopWait[]): RunStopWait |
 /**
  * Extracts the prompt when a finished turn asks the user for a decision in prose
  * (an explicit Spanish/English decision line like `necesito: ...` or `need: ...`,
- * a pipeline pause notice, or a session matched in `~/.stratos/run-stops`).
+ * a pipeline pause notice, or a session matched in `~/.stratos/run-stops` or `fleet-pane-cache`).
  */
 export function waitingReplyPrompt(row: Row, runStops: readonly RunStopWait[] = []): string | null {
   const matchedStop = matchRunStop(row, runStops)
@@ -311,6 +357,9 @@ export function waitingReplyPrompt(row: Row, runStops: readonly RunStopWait[] = 
   for (let i = lines.length - 1; i >= 0; i--) {
     if (PIPELINE_WAIT_LINE.test(lines[i])) return lines[i].slice(0, 120)
   }
+  if (/\bannounce-finalize\b/.test(str(row.toolInput) ?? '')) {
+    return 'Plan presented — waiting for your approval or changes'
+  }
   if (matchedStop) return 'Pipeline waiting for your decision'
   return null
 }
@@ -321,14 +370,18 @@ export function staffState(row: Row, runStops: readonly RunStopWait[] = []): Sta
   }
   const state = row.state
   if (state === 'working') {
-    if (row.workingMode !== 'monitoring' && row.programStatus && typeof row.programStatus === 'object') {
-      const prog = (row.programStatus as Row).state
-      if (prog && prog !== 'working') {
-        if (prog === 'done' && waitingReplyPrompt(row, runStops)) return 'waiting'
-        return prog === 'done' ? 'done' : 'idle'
-      }
+    const mainDone = (row.mainAgent as Row | null)?.state === 'done'
+    const progState =
+      row.programStatus && typeof row.programStatus === 'object' ? (row.programStatus as Row).state : undefined
+    if (row.workingMode === 'monitoring') {
+      if ((mainDone || progState === 'done') && matchRunStop(row, runStops)) return 'waiting'
+      return 'monitoring'
     }
-    return row.workingMode === 'monitoring' ? 'monitoring' : 'working'
+    if (progState && progState !== 'working') {
+      if (progState === 'done' && waitingReplyPrompt(row, runStops)) return 'waiting'
+      return progState === 'done' ? 'done' : 'idle'
+    }
+    return 'working'
   }
   if (state === 'waiting' || state === 'blocked') return state
   if (state === 'done') return waitingReplyPrompt(row, runStops) ? 'waiting' : 'done'

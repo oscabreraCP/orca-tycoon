@@ -287,6 +287,40 @@ test('staffState classifies waiting on user input or finished process', () => {
     }),
     'monitoring'
   )
+  // orchestrate announce-finalize / plan approval prompt
+  const planAnnounced = {
+    state: 'done',
+    programStatus: { state: 'done' },
+    toolName: 'Bash',
+    toolInput: 'cd ~/projects/cp-shops-catalog && autopilot orchestrate announce-finalize --worktree "$(pwd)" --run-id edffa3f5',
+    lastAssistantMessage: "I've recorded the plan announcement, so your reply to it now counts as the approval or the changes to apply."
+  }
+  assert.equal(staffState(planAnnounced), 'waiting')
+  assert.equal(
+    waitingReplyPrompt(planAnnounced),
+    "I've recorded the plan announcement, so your reply to it now counts as the approval or the changes to apply."
+  )
+  // monitoring coordinator with an active fleet-pane human Needs-you item matched by tabId
+  const monitoringCoordinator = {
+    paneKey: 'eb9cd098-4227-497b-a52e-c679869856c6:cf48ce3d-0149-4392-8d0a-e2e86b6be83e',
+    state: 'working',
+    workingMode: 'monitoring',
+    mainAgent: { state: 'done' },
+    lastAssistantMessage: 'Las otras dos pestañas siguen trabajando.\n\nnecesito: tu sí para que la prueba chica sea el primer pedazo de verificación.'
+  }
+  const fleetStops = [
+    {
+      subject: null,
+      reasonText: 'Needs you: calibrator module under layout A: reply yes or no',
+      transcriptTail: '',
+      tabId: 'eb9cd098-4227-497b-a52e-c679869856c6'
+    }
+  ]
+  assert.equal(staffState(monitoringCoordinator, fleetStops), 'waiting')
+  assert.equal(
+    waitingReplyPrompt(monitoringCoordinator, fleetStops),
+    'necesito: tu sí para que la prueba chica sea el primer pedazo de verificación.'
+  )
 })
 
 test('a seat is labelled by ticket, issue number, its own name, or the title when its name is generic', () => {
