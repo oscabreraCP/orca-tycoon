@@ -4,8 +4,10 @@ import { assert, test } from 'orca/testing'
 import {
   isChatSession,
   labelOf,
+  lineOf,
   pairedEnvironments,
   readAllHosts,
+  staffState,
   switchTo,
   terminalSwitchArgs,
   toSnapshot,
@@ -120,6 +122,38 @@ test('agents say one short line about what they are doing', () => {
   assert.equal(say({ state: 'waiting', toolName: 'AskUserQuestion' }), 'I have a question for you')
   assert.equal(say({ state: 'blocked' }), "I'm stuck, can you help?")
   assert.equal(say({ state: 'done', lastAssistantMessage: 'Merged #12.\nMore below' }), 'Merged #12.')
+})
+
+test('staffState trusts Orca\'s prompt verdict and live activity, not a stale program result', () => {
+  // the shapes Orca's agentWait verdict comes in
+  assert.equal(staffState({ state: 'working', agentWait: { source: 'prompt-text', reason: 'agent-approval-prompt' } }), 'waiting')
+  assert.equal(staffState({ state: 'working', agentWait: { source: 'title' } }), 'waiting')
+  assert.equal(staffState({ state: 'idle', agentWait: { source: 'hook', since: 1 } }), 'waiting')
+  // no verdict, or a value that is not one, is not waiting
+  for (const agentWait of [null, undefined, false, 0, '', {}]) {
+    assert.equal(staffState({ state: 'working', agentWait }), 'working')
+  }
+  // Orca's own blocked and done win over a prompt verdict
+  assert.equal(staffState({ state: 'blocked', agentWait: { source: 'title' } }), 'blocked')
+  assert.equal(staffState({ state: 'done', agentWait: { source: 'title' } }), 'done')
+  // a programStatus left over from an earlier run does not put a working agent to sleep
+  assert.equal(staffState({ state: 'working', programStatus: { state: 'done' }, activity: { status: 'working' } }), 'working')
+  assert.equal(
+    staffState({ state: 'working', workingMode: 'monitoring', programStatus: { state: 'done' }, activity: { status: 'monitoring' } }),
+    'monitoring'
+  )
+  // a run that failed shows as stuck, not free
+  assert.equal(
+    staffState({ state: 'working', workingMode: 'monitoring', programStatus: { state: 'error' }, activity: { status: 'failed' } }),
+    'blocked'
+  )
+})
+
+test('a waiting agent says what the prompt on its terminal asks for', () => {
+  const say = (row: Record<string, unknown>) => lineOf(row, 'waiting', [])
+  assert.equal(say({ agentWait: { source: 'prompt-text', reason: 'agent-approval-prompt' } }), 'Can I go ahead? I need your OK')
+  assert.equal(say({ agentWait: { source: 'prompt-text', reason: 'something-new' } }), 'I need your input')
+  assert.equal(say({ agentWait: { source: 'title' }, toolName: 'AskUserQuestion' }), 'I have a question for you')
 })
 
 test('a seat is labelled by ticket, issue number, its own name, or the title when its name is generic', () => {
@@ -355,9 +389,9 @@ test('asks every paired server, and a server that fails costs only its own desks
   )
   assert.equal(local, LOCAL_PS)
   assert.deepEqual(calls, [
-    ['worktree', 'ps', '--json'],
-    ['worktree', 'ps', '--json', '--environment', 'aaa'],
-    ['worktree', 'ps', '--json', '--environment', 'bbb']
+    ['worktree', 'ps', '--agent-wait', '--json'],
+    ['worktree', 'ps', '--agent-wait', '--json', '--environment', 'aaa'],
+    ['worktree', 'ps', '--agent-wait', '--json', '--environment', 'bbb']
   ])
   // this machine keeps the default wait; a server gets a shorter one
   assert.equal(timeouts[0], undefined)
