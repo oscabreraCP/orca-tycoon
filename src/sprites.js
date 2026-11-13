@@ -169,6 +169,9 @@ export function workstation(p, staff, t, away = false, remote = false) {
   if ((s === 'done' || s === 'idle') && !away) {
     const z = t % 16
     if (z < 12) glyph(p, 'z', 14 + (z >> 2), 2 - (z >> 2), C.white)
+  } else if (s === 'waiting' && !away) {
+    // beside the head where the z floats, inside the seat so it never paints over the row above
+    glyph(p, '?', 15, (t >> 2) % 2, C.amber)
   }
 }
 
