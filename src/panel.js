@@ -1394,7 +1394,7 @@ function noteChanges() {
     if (primed && prev && prev !== state) {
       let text = null
       if (state === 'done') text = seat.staff.said ?? 'Done!'
-      else if (state === 'waiting') text = '❓ Need you!'
+      else if (state === 'waiting') text = 'Need you!'
       else if (state === 'blocked') text = 'Stuck!'
       if (text) bubbles.set(seat.key, { text, until: now + BUBBLE_MS, kind: state === 'waiting' ? 'waiting' : 'speech' })
     }
