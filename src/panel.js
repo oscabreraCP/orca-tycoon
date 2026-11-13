@@ -176,7 +176,7 @@ function seatLabel(seat) {
   }
 
   // 4. Fallback to branch/desk name
-  return shortName(desk)
+  return nameplate(seat)
 }
 
 // ---- layout ----------------------------------------------------------------------------------
@@ -1555,14 +1555,38 @@ function stateFor(staff) {
   return how ? `${label} for ${how}` : label
 }
 
+let lastScrolledKey = null
+let lastClickHit = null
+
+function bindOpenButton(btn, action) {
+  let handledOnPointer = false
+  btn.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0 || btn.disabled) return
+    e.stopPropagation()
+    handledOnPointer = true
+    action()
+  })
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation()
+    if (handledOnPointer) {
+      handledOnPointer = false
+      return
+    }
+    if (!btn.disabled) action()
+  })
+}
+
 function renderDetail() {
   const box = document.getElementById('detail')
   const seat = selected && seatOf(selected)
   if (!seat) {
     box.hidden = true
+    lastScrolledKey = null
     document.body.classList.remove('has-detail')
     return
   }
+  const shouldScroll = seat.key !== lastScrolledKey
+  lastScrolledKey = seat.key
   document.body.classList.add('has-detail')
   const { desk: d, staff, room } = seat
   const isLead = Boolean(staff.isLeader)
@@ -1591,10 +1615,7 @@ function renderDetail() {
     const button = el('button', 'open', openingSelf ? 'Abriendo...' : '↗ Abrir pestaña en Orca')
     button.type = 'button'
     button.disabled = Boolean(state?.busy)
-    button.addEventListener('click', (e) => {
-      e.stopPropagation()
-      openInOrca(seat)
-    })
+    bindOpenButton(button, () => openInOrca(seat))
     const actions = el('div', 'actions')
     actions.append(button)
 
@@ -1605,10 +1626,7 @@ function renderDetail() {
       leaderBtn.type = 'button'
       leaderBtn.disabled = Boolean(state?.busy)
       leaderBtn.title = `Abrir pestaña del líder en Orca: ${leaderSeat.staff.name || leaderSeat.desk.name}`
-      leaderBtn.addEventListener('click', (e) => {
-        e.stopPropagation()
-        openInOrca(leaderSeat, seat.key)
-      })
+      bindOpenButton(leaderBtn, () => openInOrca(leaderSeat, seat.key))
       actions.append(leaderBtn)
     }
 
@@ -1618,20 +1636,22 @@ function renderDetail() {
   box.replaceChildren(...lines)
   box.hidden = false
 
-  // If the selected seat would be covered by #detail, smoothly scroll it into view
-  requestAnimationFrame(() => {
-    if (!box.hidden && seat && layout) {
-      const officeRect = office.getBoundingClientRect()
-      const detailRect = box.getBoundingClientRect()
-      const seatBottom = (seat.y + SEAT_H + LABEL_H) * layout.scale
-      const currentScroll = office.scrollTop
-      const seatScreenBottom = officeRect.top + seatBottom - currentScroll
-      if (seatScreenBottom > detailRect.top - 12) {
-        const neededScroll = seatScreenBottom - (detailRect.top - 12)
-        office.scrollTo({ top: currentScroll + neededScroll, behavior: 'smooth' })
+  // If the newly selected seat would be covered by #detail, smoothly scroll it into view after the double-click window
+  if (shouldScroll) {
+    setTimeout(() => {
+      if (!box.hidden && seatOf(selected)?.key === seat.key && layout) {
+        const officeRect = office.getBoundingClientRect()
+        const detailRect = box.getBoundingClientRect()
+        const seatBottom = (seat.y + SEAT_H + LABEL_H) * layout.scale
+        const currentScroll = office.scrollTop
+        const seatScreenBottom = officeRect.top + seatBottom - currentScroll
+        if (seatScreenBottom > detailRect.top - 12) {
+          const neededScroll = seatScreenBottom - (detailRect.top - 12)
+          office.scrollTo({ top: currentScroll + neededScroll, behavior: 'smooth' })
+        }
       }
-    }
-  })
+    }, 280)
+  }
 }
 
 function showMessage(text) {
@@ -1821,6 +1841,7 @@ canvas.addEventListener('mouseleave', () => {
 canvas.addEventListener('click', (event) => {
   pointer = null
   hideCard()
+  if (event.detail > 1) return
   const [ax, ay] = artPoint(event)
   // a pat wakes Palú: if he is resting, he gets up and goes on to whatever he does next
   if (onPalu(ax, ay)) {
@@ -1828,6 +1849,7 @@ canvas.addEventListener('click', (event) => {
     return
   }
   const hit = whoAt(ax, ay)
+  lastClickHit = hit ? { key: hit, at: Date.now() } : null
   selected = hit && hit !== selected ? hit : null
   if (opening && seatOf(selected)?.key !== opening.key) opening = null
   renderDetail()
@@ -1836,7 +1858,8 @@ canvas.addEventListener('click', (event) => {
 
 canvas.addEventListener('dblclick', (event) => {
   const [ax, ay] = artPoint(event)
-  const hit = whoAt(ax, ay)
+  const recentHit = lastClickHit && Date.now() - lastClickHit.at < 600 ? lastClickHit.key : null
+  const hit = whoAt(ax, ay) ?? recentHit
   const seat = hit && seatOf(hit)
   if (seat) {
     selected = hit

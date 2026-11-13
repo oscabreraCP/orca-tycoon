@@ -122,21 +122,43 @@ function runPs() {
 
 async function switchTerminal(paneKey) {
   try {
-    const data = await execCliJson(['terminal', 'list', '--json'])
-    const terminals = data?.result?.terminals
-    if (Array.isArray(terminals)) {
-      const match = terminals.find((t) => {
-        const tabId = String(t.tabId ?? '')
-        const leafId = String(t.leafId ?? '')
-        const key = `${tabId}:${leafId}`
-        return key === paneKey || tabId === paneKey || leafId === paneKey
-      })
-      if (match && match.handle) {
-        await execCliJson(['terminal', 'switch', '--terminal', String(match.handle), '--json'])
+    let handle = null
+    if (!String(paneKey).startsWith('structured-agent-session-')) {
+      const data = await execCliJson(['terminal', 'list', '--json'])
+      const terminals = data?.result?.terminals
+      if (Array.isArray(terminals)) {
+        const exact = terminals.find((t) => `${String(t.tabId ?? '')}:${String(t.leafId ?? '')}` === paneKey)
+        const tabId = String(paneKey).includes(':') ? String(paneKey).split(':')[0] : ''
+        const match =
+          exact ??
+          terminals.find((t) => {
+            const tTab = String(t.tabId ?? '')
+            const tLeaf = String(t.leafId ?? '')
+            return (tabId && tTab === tabId) || tTab === paneKey || tLeaf === paneKey
+          })
+        if (match && match.handle) {
+          handle = String(match.handle)
+          const res = await execCliJson(['terminal', 'switch', '--terminal', handle, '--json'])
+          if (res?.result?.focus?.navigated !== false) return true
+        }
+      }
+    }
+    const ps = await execCliJson(['worktree', 'ps', '--json'])
+    const worktrees = ps?.result?.worktrees
+    if (Array.isArray(worktrees)) {
+      for (const w of worktrees) {
+        const agents = Array.isArray(w.agents) ? w.agents : []
+        if (!agents.some((a) => a.paneKey === paneKey)) continue
+        const id = str(w.worktreeId)
+        if (!id) break
+        await execCliJson(['worktree', 'activate', '--worktree', `id:${id}`, '--json'])
+        if (handle) {
+          await execCliJson(['terminal', 'switch', '--terminal', handle, '--json'])
+        }
         return true
       }
     }
-    return false
+    return Boolean(handle)
   } catch {
     return false
   }
