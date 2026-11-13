@@ -1517,26 +1517,29 @@ function findLeaderForSeat(seat) {
   const allLeads = layout.seats.filter((s) => s.staff.isLeader)
   if (allLeads.length === 0) return null
 
-  // 1. Match orchestration run prefix (e.g. orch:19)
-  const orchMatch = (seat.staff.name ?? '').match(/\b(orch:\d+)\b/i)
+  const haystack = `${seat.staff.name ?? ''} ${seat.staff.task ?? ''}`
+
+  // 1. Match explicit orchestration tag (e.g. orch:7)
+  const orchMatch = haystack.match(/\b(orch:\d+)\b/i)
   if (orchMatch) {
     const orchPrefix = orchMatch[1].toLowerCase()
-    const match = allLeads.find((l) => (l.staff.name ?? '').toLowerCase().includes(orchPrefix))
+    const match = allLeads.find((l) => `${l.staff.name ?? ''} ${l.staff.task ?? ''}`.toLowerCase().includes(orchPrefix))
     if (match) return match
   }
 
-  // 2. Parent worktree match
+  // 2. Match orchestrate run UUID prefix from brief path (e.g. .stratos/orchestrate/862ed199-...)
+  const runMatch = haystack.match(/\.stratos\/orchestrate\/([0-9a-f]{8})/i)
+  if (runMatch) {
+    const runPrefix = runMatch[1].toLowerCase()
+    const match = allLeads.find((l) => `${l.staff.name ?? ''} ${l.staff.task ?? ''}`.toLowerCase().includes(runPrefix))
+    if (match) return match
+  }
+
+  // 3. Explicit child worktree spawned from the leader's parent worktree
   if (seat.desk.parentId) {
     const match = allLeads.find((l) => l.desk.id === seat.desk.parentId)
     if (match) return match
   }
-
-  // 3. Same room (same project/repo)
-  const sameRoomLeads = allLeads.filter((l) => l.room?.name && l.room.name === seat.room?.name)
-  if (sameRoomLeads.length > 0) return sameRoomLeads[0]
-
-  // 4. Fallback if only 1 lead in whole office
-  if (allLeads.length === 1) return allLeads[0]
 
   return null
 }
