@@ -49,7 +49,7 @@ import {
   workstation
 } from './sprites.js'
 
-const POLL_MS = 3000
+const POLL_MS = 6000
 const FRAME_MS = 125
 const BUBBLE_MS = 9000
 
@@ -1870,16 +1870,27 @@ canvas.addEventListener('dblclick', (event) => {
   }
 })
 
+let pollTimer = null
+let polling = false
 async function poll() {
+  clearTimeout(pollTimer)
+  if (polling) return
+  polling = true
+  // Hidden panel: no question to Orca at all; the visibilitychange handler resumes it.
   if (document.visibilityState !== 'hidden') {
     try {
       apply(await requestSnapshot())
     } catch (error) {
       if (layout.seats.length === 0) showMessage(`The worker did not answer: ${error?.message ?? error}`)
     }
+    pollTimer = setTimeout(poll, POLL_MS)
   }
-  setTimeout(poll, POLL_MS)
+  polling = false
 }
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'hidden') poll()
+})
 
 setInterval(() => {
   if (document.visibilityState === 'hidden') return
