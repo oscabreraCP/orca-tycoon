@@ -1170,9 +1170,9 @@ function drawBubble(anchor, text, kind = 'speech') {
   x = Math.max(6, Math.min(x, layout.artW * s - w - 6))
   const y = Math.max(4, Math.round(anchor.y * s - h - 2))
 
-  if (kind === 'waiting' || kind === 'thought') {
+  if (kind === 'waiting') {
     ctx.fillStyle = '#fff9e6'
-    ctx.strokeStyle = '#f6b23c'
+    ctx.strokeStyle = C.amber
     ctx.lineWidth = 1.5
     ctx.beginPath()
     ctx.roundRect(x, y, w, h, 8)
@@ -1280,21 +1280,10 @@ function draw() {
   const now = Date.now()
   for (const seat of layout.seats) {
     const b = bubbles.get(seat.key)
-    const isWaiting = seat.staff.state === 'waiting'
-    if (seat.key !== selected) {
-      if (isWaiting) {
-        const text = (b && b.until > now && b.text) ? b.text : '❓ Need you!'
-        drawBubble(bubbleAnchor(seat.key), text, 'waiting')
-      } else if (b && b.until > now) {
-        drawBubble(bubbleAnchor(seat.key), b.text, 'speech')
-      }
-    }
+    if (seat.key !== selected && b && b.until > now) drawBubble(bubbleAnchor(seat.key), b.text, b.kind)
   }
   const anchor = selected && bubbleAnchor(selected)
-  if (anchor) {
-    const isWaiting = layout.seats.find((u) => u.key === selected)?.staff?.state === 'waiting'
-    drawBubble(anchor, sayingOf(selected), isWaiting ? 'waiting' : 'speech')
-  }
+  if (anchor) drawBubble(anchor, sayingOf(selected), !visitors.has(selected) && seatOf(selected)?.staff?.state === 'waiting' ? 'waiting' : 'speech')
 }
 
 // ---- side text ---------------------------------------------------------------------------------
@@ -1407,7 +1396,7 @@ function noteChanges() {
       if (state === 'done') text = seat.staff.said ?? 'Done!'
       else if (state === 'waiting') text = '❓ Need you!'
       else if (state === 'blocked') text = 'Stuck!'
-      if (text) bubbles.set(seat.key, { text, until: now + BUBBLE_MS })
+      if (text) bubbles.set(seat.key, { text, until: now + BUBBLE_MS, kind: state === 'waiting' ? 'waiting' : 'speech' })
     }
     lastState.set(seat.key, state)
   }

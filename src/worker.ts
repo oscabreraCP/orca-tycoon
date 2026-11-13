@@ -92,19 +92,27 @@ export async function readAllHosts(
   return { local, servers: answers.filter((a): a is ServerAnswer => a !== null) }
 }
 
+/**
+ * Orca's verdict that a terminal agent sits on a prompt only a person can answer:
+ * `{source: 'prompt-text', reason, since?}`, `{source: 'title'}` or `{source: 'hook', since}`.
+ * Anything else (absent, null, a stray primitive) means it is not waiting on you.
+ */
+function waitOf(row: Row): Row | null {
+  const wait = row.agentWait
+  return wait !== null && typeof wait === 'object' && typeof (wait as Row).source === 'string' ? (wait as Row) : null
+}
+
 export function staffState(row: Row): StaffState {
-  if (row.agentWait != null && (typeof row.agentWait !== 'object' || Object.keys(row.agentWait).length > 0)) {
-    return 'waiting'
-  }
   const state = row.state
+  // Orca's own blocked and done win over a stale prompt verdict
+  if (state === 'blocked' || state === 'done') return state
+  if (waitOf(row)) return 'waiting'
   if (state === 'working') {
-    if (row.workingMode !== 'monitoring' && row.programStatus && typeof row.programStatus === 'object') {
-      const prog = (row.programStatus as Row).state
-      if (prog && prog !== 'working') return prog === 'done' ? 'done' : 'idle'
-    }
+    // `programStatus` lingers from an earlier turn, so only the live activity can say a run failed
+    if ((row.activity as Row | null)?.status === 'failed') return 'blocked'
     return row.workingMode === 'monitoring' ? 'monitoring' : 'working'
   }
-  if (state === 'waiting' || state === 'blocked' || state === 'done') return state
+  if (state === 'waiting') return state
   return 'idle'
 }
 
@@ -233,12 +241,20 @@ function toolLine(tool: string, input: string | null): string {
   return "I'm working on it"
 }
 
+/** What an agent says for each prompt Orca recognises on its terminal. */
+const WAIT_LINES: Record<string, string> = {
+  'agent-approval-prompt': 'Can I go ahead? I need your OK',
+  'agent-hooks-review-prompt': 'Please review my hooks',
+  'agent-startup-menu-prompt': 'Pick an option to get me started',
+  'agent-update-prompt': 'I have an update to confirm'
+}
+
 /** The one line an agent says when you click it. */
 export function lineOf(row: Row, state: StaffState, specialists: Specialist[]): string {
   const busy = specialists.filter((s) => s.state !== 'done' && s.state !== 'idle')
   if (state === 'waiting') {
-    const prompt = str(row.agentWaitPrompt) ?? str((row.agentWait as Row)?.prompt) ?? str((row.agentWait as Row)?.message)
-    if (prompt) return prompt
+    const reason = str(waitOf(row)?.reason)
+    if (reason && WAIT_LINES[reason]) return WAIT_LINES[reason]
     return /ask/i.test(String(row.toolName ?? '')) ? 'I have a question for you' : 'I need your input'
   }
   if (state === 'blocked') return "I'm stuck, can you help?"

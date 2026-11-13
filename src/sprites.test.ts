@@ -43,8 +43,9 @@ test('a waiting agent paints an animated question mark overhead', () => {
   workstation((x: number, y: number, w: number, h: number, c: string) => {
     for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) px.set(`${x + i},${y + j}`, c)
   }, { id: 'a', state: 'waiting' }, 0, false, false)
-  // qx = 9, qy = -3, glyph '?' starts at (9, -3) with color C.amber
-  assert.equal(px.get('9,-3'), C.amber)
-  assert.equal(px.get('10,-3'), C.amber)
-  assert.equal(px.get('11,-3'), C.amber)
+  // the '?' top bar sits beside the head at (15..17, 0), then bobs down a pixel
+  assert.equal(px.get('15,0'), C.amber)
+  assert.equal(px.get('17,0'), C.amber)
+  // nothing is painted above the seat's own cell, into the row above
+  assert.ok([...px.keys()].every((k) => Number(k.split(',')[1]) >= 0))
 })
