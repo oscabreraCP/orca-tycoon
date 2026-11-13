@@ -1544,6 +1544,17 @@ function findLeaderForSeat(seat) {
   return null
 }
 
+function stateLabel(state) {
+  return STATE_LABEL[state] ?? state ?? 'unknown'
+}
+
+/** An agent's state and how long it has been in it, when the worker knows. */
+function stateFor(staff) {
+  const label = stateLabel(staff.state)
+  const how = since(staff.since)
+  return how ? `${label} for ${how}` : label
+}
+
 function renderDetail() {
   const box = document.getElementById('detail')
   const seat = selected && seatOf(selected)
@@ -1566,13 +1577,13 @@ function renderDetail() {
   if (isLead) lines.push(el('div', 'row', '👑 <strong>Líder / Coordinador</strong> (orquestando workers)'))
   if (d.host) lines.push(el('div', 'row', `🌐 on ${d.host}`))
   if (room) lines.push(el('div', 'row', `📁 ${room.name} · 🌿 ${d.branch ?? d.name}`))
-  lines.push(el('div', 'row', `🤖 ${staff.agent ?? 'agent'} · ${STATE_LABEL[staff.state]} for ${since(staff.since)}`))
+  lines.push(el('div', 'row', `🤖 ${staff.agent ?? 'agent'} · ${stateFor(staff)}`))
   if (staff.tool && staff.state === 'working') lines.push(el('div', 'row', `⚡ using ${staff.tool}`))
   if (staff.task && staff.task !== staff.name) lines.push(el('div', 'row', `📋 ${staff.task}`))
   if (staff.state === 'waiting' && staff.line) lines.push(el('div', 'row', `🙋 ${staff.line}`))
   if (staff.said && staff.said !== staff.line) lines.push(el('div', 'row', `💬 "${staff.said}"`))
   for (const sp of activeSpecialists(staff)) {
-    lines.push(el('div', 'row', `👥 ${sp.role ?? 'specialist'}: ${sp.task ?? ''} (${STATE_LABEL[sp.state]})`))
+    lines.push(el('div', 'row', `👥 ${sp.role ?? 'specialist'}: ${sp.task ?? ''} (${stateLabel(sp.state)})`))
   }
   if (staff.id) {
     const state = opening?.key === seat.key ? opening : null
@@ -1653,6 +1664,7 @@ function apply(next) {
   noteChanges()
   renderStats()
   renderDetail()
+  refreshCard()
   if (layout.seats.length === 0) {
     showMessage(next.error ? `Could not read the agents: ${next.error}` : 'The office is empty. Start an agent and it gets a desk.')
   } else showMessage(null)
@@ -1682,7 +1694,7 @@ function sayingOf(key) {
   const v = visitors.get(key)
   if (v) return v.spec.task ?? `${v.spec.role ?? 'specialist'}, on it`
   const staff = seatOf(key)?.staff
-  return staff ? staff.line ?? staff.said ?? STATE_LABEL[staff.state] : ''
+  return staff ? staff.line ?? staff.said ?? stateLabel(staff.state) : ''
 }
 
 /** Who is under the point: a person first, wherever they are, then a desk. */
@@ -1705,7 +1717,7 @@ function whoAt(ax, ay) {
   return layout.seats.find((u) => inBox([u.x, u.y, SEAT_W, SEAT_H + LABEL_H]))?.key ?? null
 }
 
-// Floating hover tooltip for seats and Palú
+// Floating hover tooltip for seats, specialists and Palú
 const tooltip = document.createElement('div')
 tooltip.id = 'seat-tooltip'
 tooltip.style.cssText = 'position:fixed;display:none;pointer-events:none;z-index:9999;padding:6px 10px;background:var(--orca-popover,#1f1c2b);color:var(--orca-popover-foreground,#eee);border:1px solid var(--orca-muted,#3d3755);border-radius:6px;font-size:11px;line-height:1.45;box-shadow:0 4px 14px rgba(0,0,0,0.45);max-width:320px;backdrop-filter:blur(8px);'
@@ -1715,49 +1727,100 @@ function escapeHtml(s) {
   return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 }
 
-canvas.addEventListener('mousemove', (event) => {
-  const [ax, ay] = artPoint(event)
+// Where the pointer is over the canvas, or null when it is outside. The card is refreshed from it on
+// every frame and every snapshot, so it follows someone who walks away and goes when a seat closes.
+let pointer = null
+let cardSig = null
+
+function hideCard() {
+  if (tooltip) tooltip.style.display = 'none'
+  cardSig = null
+}
+
+function cardHtmlAt(ax, ay) {
   const targetKey = whoAt(ax, ay)
-  const onDog = onPalu(ax, ay)
-  canvas.style.cursor = targetKey || onDog ? 'pointer' : ''
+  const visitor = targetKey && visitors.get(targetKey)
+  if (visitor) {
+    const { spec } = visitor
+    const host = seatOf(targetKey)
+    const lines = [`🤖 <span style="color:var(--orca-primary,#82aaff)">${escapeHtml(stateLabel(spec.state))}</span>`]
+    if (spec.task) lines.push(`📋 ${escapeHtml(spec.task)}`)
+    if (host) lines.push(`🤝 helping <strong>${escapeHtml(nameplate(host))}</strong>`)
+    return {
+      key: targetKey,
+      html: `<div style="font-weight:700;margin-bottom:3px;color:var(--orca-foreground,#fff);">👥 ${escapeHtml(spec.role ?? 'specialist')}</div><div style="color:var(--orca-muted-foreground,#9a97a8);font-size:10.5px;">${lines.join('<br>')}</div>`
+    }
+  }
 
   const hit = targetKey && seatOf(targetKey)
   if (hit) {
     const { desk: d, staff, room } = hit
     const isLead = Boolean(staff.isLeader)
-    const title = (isLead ? '👑 ' : '') + (staff.name || d.name)
+    const title = (isLead ? '👑 ' : '') + (staff.name || staff.label || d.name)
     const leadBadge = isLead
       ? ` <span style="background:rgba(246,178,60,0.18);color:#f6b23c;border:1px solid rgba(246,178,60,0.4);padding:1px 5px;border-radius:3px;font-size:9.5px;font-weight:700;">👑 LÍDER</span>`
       : ''
-    const stateInfo = `🤖 <strong>${escapeHtml(staff.agent || 'agent')}</strong> · <span style="color:var(--orca-primary,#82aaff)">${escapeHtml(STATE_LABEL[staff.state])}</span> (${since(staff.since)})`
+    const how = since(staff.since)
+    const stateInfo = `🤖 <strong>${escapeHtml(staff.agent || 'agent')}</strong> · <span style="color:var(--orca-primary,#82aaff)">${escapeHtml(stateLabel(staff.state))}</span>${how ? ` (${escapeHtml(how)})` : ''}`
     const hostInfo = d.host ? ` · 🌐 ${escapeHtml(d.host)}` : ''
     const locInfo = `📁 ${escapeHtml(room?.name ?? '')} · 🌿 ${escapeHtml(d.branch || d.name)}${hostInfo}`
     const toolInfo = staff.tool && staff.state === 'working' ? `<br>⚡ using <code>${escapeHtml(staff.tool)}</code>` : ''
     const waitInfo = staff.state === 'waiting' && staff.line ? `<br>🙋 <strong>${escapeHtml(staff.line)}</strong>` : ''
     const saidInfo = staff.said && staff.said !== staff.line ? `<br>💬 <em>"${escapeHtml(staff.said)}"</em>` : ''
-    const specInfo = staff.specialists?.length ? `<br>👥 ${escapeHtml(staff.specialists.map((s) => s.role).filter(Boolean).join(', '))}` : ''
+    const activeSpecs = activeSpecialists(staff)
+    const specInfo = activeSpecs.length
+      ? `<br>👥 ${escapeHtml(activeSpecs.map((s) => `${s.role ?? 'specialist'} (${stateLabel(s.state)})`).join(', '))}`
+      : ''
 
-    tooltip.innerHTML = `<div style="font-weight:700;margin-bottom:3px;color:var(--orca-foreground,#fff);">${escapeHtml(title)}${leadBadge}</div><div style="color:var(--orca-muted-foreground,#9a97a8);font-size:10.5px;">${locInfo}<br>${stateInfo}${toolInfo}${waitInfo}${saidInfo}${specInfo}</div>`
-    tooltip.style.display = 'block'
-    const x = Math.min(window.innerWidth - 330, event.clientX + 14)
-    const y = Math.min(window.innerHeight - 120, event.clientY + 14)
-    tooltip.style.left = `${Math.max(10, x)}px`
-    tooltip.style.top = `${Math.max(10, y)}px`
-  } else if (onDog) {
-    tooltip.innerHTML = `<strong>Palú 🐾</strong><br><span style="color:var(--orca-muted-foreground,#9a97a8)">The office dog. Click to pet him!</span>`
-    tooltip.style.display = 'block'
-    tooltip.style.left = `${event.clientX + 14}px`
-    tooltip.style.top = `${event.clientY + 14}px`
-  } else {
-    tooltip.style.display = 'none'
+    return {
+      key: targetKey,
+      html: `<div style="font-weight:700;margin-bottom:3px;color:var(--orca-foreground,#fff);">${escapeHtml(title)}${leadBadge}</div><div style="color:var(--orca-muted-foreground,#9a97a8);font-size:10.5px;">${locInfo}<br>${stateInfo}${toolInfo}${waitInfo}${saidInfo}${specInfo}</div>`
+    }
   }
+
+  if (onPalu(ax, ay)) {
+    return {
+      key: 'palu',
+      html: `<strong>Palú 🐾</strong><br><span style="color:var(--orca-muted-foreground,#9a97a8)">The office dog. A pat wakes him up!</span>`
+    }
+  }
+
+  return null
+}
+
+function refreshCard() {
+  if (!tooltip) return
+  if (!pointer) return hideCard()
+  const card = cardHtmlAt(...pointer.art())
+  canvas.style.cursor = card ? 'pointer' : ''
+  if (!card) return hideCard()
+  if (card.html !== cardSig) {
+    cardSig = card.html
+    tooltip.innerHTML = card.html
+    tooltip.style.display = 'block'
+  }
+  const margin = 10
+  const x = Math.min(window.innerWidth - tooltip.offsetWidth - margin, pointer.x + 14)
+  const y = Math.min(window.innerHeight - tooltip.offsetHeight - margin, pointer.y + 14)
+  tooltip.style.left = `${Math.max(margin, x)}px`
+  tooltip.style.top = `${Math.max(margin, y)}px`
+}
+
+canvas.addEventListener('mousemove', (event) => {
+  const { clientX: x, clientY: y } = event
+  pointer = { x, y, art: () => artPoint({ clientX: x, clientY: y }) }
+  refreshCard()
 })
 
 canvas.addEventListener('mouseleave', () => {
-  tooltip.style.display = 'none'
+  pointer = null
+  canvas.style.cursor = ''
+  hideCard()
 })
 
 canvas.addEventListener('click', (event) => {
+  pointer = null
+  hideCard()
   const [ax, ay] = artPoint(event)
   // a pat wakes Palú: if he is resting, he gets up and goes on to whatever he does next
   if (onPalu(ax, ay)) {
@@ -1803,6 +1866,7 @@ setInterval(() => {
   stepPalu()
   if (snapshot) scenePrimed = true
   draw()
+  refreshCard()
 }, FRAME_MS)
 
 // The office's box follows the panel, not the canvas, so a relayout cannot re-fire this. Lay out
