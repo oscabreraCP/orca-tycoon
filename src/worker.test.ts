@@ -396,6 +396,8 @@ const PS = {
 
 test('finds the terminal handle for a pane key, and nothing for the rest', () => {
   assert.deepEqual(terminalSwitchArgs('tab-2:leaf-2', TERMINALS), ['terminal', 'switch', '--terminal', 'term_bbb'])
+  // falls back to the tabId when a split-pane leaf changed
+  assert.deepEqual(terminalSwitchArgs('tab-2:leaf-other', TERMINALS), ['terminal', 'switch', '--terminal', 'term_bbb'])
   // the whole key, never the tab or the leaf on its own
   assert.equal(terminalSwitchArgs('tab-2', TERMINALS), null)
   assert.equal(terminalSwitchArgs('leaf-2', TERMINALS), null)
@@ -458,6 +460,28 @@ test('switchTo runs only the lookup and the one switch, with the CLI injected', 
     args[1] === 'switch' ? Promise.reject(new Error('terminal_handle_stale')) : TERMINALS
   )
   assert.deepEqual(refused, { ok: false, error: 'terminal_handle_stale' })
+  // when terminal switch reports navigated: false, activates the worktree and retries terminal switch
+  calls.length = 0
+  let switchCalls = 0
+  const retryCli = async (args: string[]) => {
+    calls.push(args)
+    const cmd = args.slice(0, 2).join(' ')
+    if (cmd === 'terminal list') return TERMINALS
+    if (cmd === 'terminal switch') {
+      switchCalls += 1
+      return { ok: true, result: { focus: { navigated: switchCalls > 1 } } }
+    }
+    if (cmd === 'worktree ps') return PS
+    return { ok: true }
+  }
+  assert.deepEqual(await switchTo({ paneKey: 'tab-1:leaf-1' }, retryCli), { ok: true, via: 'terminal' })
+  assert.deepEqual(calls.map((c) => c.slice(0, 2).join(' ')), [
+    'terminal list',
+    'terminal switch',
+    'worktree ps',
+    'worktree activate',
+    'terminal switch'
+  ])
 })
 
 test('switchTo refuses anything but a pane key without touching the CLI', async () => {

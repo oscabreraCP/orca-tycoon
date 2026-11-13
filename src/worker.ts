@@ -738,7 +738,9 @@ export const isChatSession = (paneKey: string): boolean => paneKey.startsWith(CH
 export function terminalSwitchArgs(paneKey: string, raw: unknown): string[] | null {
   const terminals = (raw as { result?: { terminals?: Row[] } } | null)?.result?.terminals
   if (!Array.isArray(terminals)) return null
-  const match = terminals.find((t) => `${String(t.tabId ?? '')}:${String(t.leafId ?? '')}` === paneKey)
+  const exact = terminals.find((t) => `${String(t.tabId ?? '')}:${String(t.leafId ?? '')}` === paneKey)
+  const tabId = paneKey.includes(':') ? paneKey.split(':')[0] : ''
+  const match = exact ?? (tabId ? terminals.find((t) => String(t.tabId ?? '') === tabId) : undefined)
   const handle = str(match?.handle)
   return handle ? ['terminal', 'switch', '--terminal', handle] : null
 }
@@ -776,16 +778,24 @@ export async function switchTo(
   }
   const on = environment ? ['--environment', environment] : []
   try {
+    let terminal: string[] | null = null
     if (!isChatSession(paneKey)) {
-      const terminal = terminalSwitchArgs(paneKey, await run(['terminal', 'list', '--json', ...on]))
+      terminal = terminalSwitchArgs(paneKey, await run(['terminal', 'list', '--json', ...on]))
       if (terminal) {
-        await run([...terminal, '--json', ...on])
-        return { ok: true, via: 'terminal' }
+        const res = await run([...terminal, '--json', ...on])
+        const navigated = (res as { result?: { focus?: { navigated?: unknown } } } | null)?.result?.focus?.navigated
+        if (navigated !== false) return { ok: true, via: 'terminal' }
       }
     }
     const worktree = worktreeActivateArgs(paneKey, await run(['worktree', 'ps', '--json', ...on]))
-    if (!worktree) return { ok: false, error: 'this agent is no longer in Orca' }
+    if (!worktree) {
+      return terminal ? { ok: true, via: 'terminal' } : { ok: false, error: 'this agent is no longer in Orca' }
+    }
     await run([...worktree, '--json', ...on])
+    if (terminal) {
+      await run([...terminal, '--json', ...on])
+      return { ok: true, via: 'terminal' }
+    }
     return { ok: true, via: 'worktree' }
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : String(error) }
