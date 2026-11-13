@@ -1489,8 +1489,8 @@ async function requestSnapshot() {
 let opening = null
 
 /** Asks the worker to bring the agent's tab to the front; the panel itself never moves Orca's focus. */
-async function openInOrca(seat) {
-  opening = { key: seat.key, text: null, busy: true }
+async function openInOrca(seat, ownerKey = seat.key) {
+  opening = { key: ownerKey, targetKey: seat.key, text: null, busy: true }
   renderDetail()
   let outcome
   try {
@@ -1507,8 +1507,8 @@ async function openInOrca(seat) {
   } catch (error) {
     outcome = { ok: false, error: error?.message ?? String(error) }
   }
-  if (opening?.key !== seat.key) return
-  opening = outcome.ok ? null : { key: seat.key, text: `Could not open it in Orca: ${outcome.error}`, busy: false }
+  if (opening?.key !== ownerKey || opening?.targetKey !== seat.key) return
+  opening = outcome.ok ? null : { key: ownerKey, targetKey: seat.key, text: `Could not open it in Orca: ${outcome.error}`, busy: false }
   renderDetail()
 }
 
@@ -1539,17 +1539,6 @@ function findLeaderForSeat(seat) {
   if (allLeads.length === 1) return allLeads[0]
 
   return null
-}
-
-function scrollToSeat(seat) {
-  if (!seat || !layout) return
-  const s = layout.scale
-  const officeRect = office.getBoundingClientRect()
-  const detailBox = document.getElementById('detail')
-  const detailHeight = detailBox && !detailBox.hidden ? detailBox.offsetHeight : 0
-  const visibleHeight = officeRect.height - detailHeight
-  const targetTop = Math.max(0, seat.y * s - visibleHeight / 3)
-  office.scrollTo({ top: targetTop, behavior: 'smooth' })
 }
 
 function renderDetail() {
@@ -1584,7 +1573,8 @@ function renderDetail() {
   }
   if (staff.id) {
     const state = opening?.key === seat.key ? opening : null
-    const button = el('button', 'open', state?.busy ? 'Abriendo...' : '↗ Abrir pestaña en Orca')
+    const openingSelf = Boolean(state?.busy && state?.targetKey === seat.key)
+    const button = el('button', 'open', openingSelf ? 'Abriendo...' : '↗ Abrir pestaña en Orca')
     button.type = 'button'
     button.disabled = Boolean(state?.busy)
     button.addEventListener('click', (e) => {
@@ -1595,16 +1585,15 @@ function renderDetail() {
     actions.append(button)
 
     const leaderSeat = findLeaderForSeat(seat)
-    if (leaderSeat) {
-      const leaderBtn = el('button', 'btn-leader', '👑 Ir a líder')
+    if (leaderSeat?.staff?.id) {
+      const openingLeader = Boolean(state?.busy && state?.targetKey === leaderSeat.key)
+      const leaderBtn = el('button', 'btn-leader', openingLeader ? '👑 Abriendo líder...' : '👑 Ir a líder')
       leaderBtn.type = 'button'
-      leaderBtn.title = `Ir a líder: ${leaderSeat.staff.name || leaderSeat.desk.name}`
+      leaderBtn.disabled = Boolean(state?.busy)
+      leaderBtn.title = `Abrir pestaña del líder en Orca: ${leaderSeat.staff.name || leaderSeat.desk.name}`
       leaderBtn.addEventListener('click', (e) => {
         e.stopPropagation()
-        selected = leaderSeat.key
-        renderDetail()
-        draw()
-        scrollToSeat(leaderSeat)
+        openInOrca(leaderSeat, seat.key)
       })
       actions.append(leaderBtn)
     }
