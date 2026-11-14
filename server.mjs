@@ -57,7 +57,7 @@ function cliCandidates() {
   } else if (platform === 'linux') {
     if (env.HOME?.trim()) {
       const home = env.HOME.trim().replace(/\/+$/, '')
-      push(`${home}/.config/Orca/linux-orca-cli-shim/orca`)
+      push(`${home}/.config/orca/linux-orca-cli-shim/orca`)
       push(`${home}/.local/bin/orca-ide`)
     }
     push('/usr/local/bin/orca-ide')

@@ -79,7 +79,7 @@ export function cliCandidates(options: CliLookupEnv = {}): string[] {
     // On Linux desktop, Orca installs its CLI as `orca-ide` because `/usr/bin/orca` is the GNOME screen reader.
     if (env.HOME?.trim()) {
       const home = env.HOME.trim().replace(/\/+$/, '')
-      push(`${home}/.config/Orca/linux-orca-cli-shim/orca`)
+      push(`${home}/.config/orca/linux-orca-cli-shim/orca`)
       push(`${home}/.local/bin/orca-ide`)
     }
     push('/usr/local/bin/orca-ide')

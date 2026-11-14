@@ -13,9 +13,7 @@ who needs you and who is done, without having to click through every workspace.
 
 Requires Orca 1.4.246 or newer.
 
-In Orca, open **Settings → Plugins**, and install **Orca Tycoon** (`palulabs.office-tycoon`) from the plugin directory.
-
-To run it from a clone or development folder instead:
+Install it from this repository, following the steps below for your system. The catalog entry `palulabs.office-tycoon` is the upstream build: it has no Christmas theme and does not work on Linux.
 
 **macOS:**
 ```sh
