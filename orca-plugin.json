@@ -2,7 +2,7 @@
   "manifestVersion": 2,
   "id": "office-tycoon",
   "name": "Cyberpuerta Office Tycoon",
-  "version": "0.2.7",
+  "version": "0.2.8",
   "description": "Every agent on your Orca host as a little pixel worker in a tycoon-style office.",
   "author": {
     "name": "Palu Labs (maintained by Cyberpuerta)",
@@ -13,20 +13,20 @@
   "icon": "docs/catalog/icon.png",
   "cover": {
     "path": "docs/catalog/cover.png",
-    "alt": "The commons of a pixel office: agents on the sofa and at the coffee corner, a foosball table, and Palú the dog eating from his bowl"
+    "alt": "The hangout in the Loft: agents chatting at a round white table, one on the sofa on a pink rug, a coffee counter and foosball"
   },
   "screenshots": [
     {
       "path": "docs/catalog/office.png",
-      "alt": "The whole office: five teams at their desks around a commons band with a lounge, kitchen, foosball table and calling booths"
+      "alt": "The whole office in the Loft: five teams at islands of desks behind navy curtains under tall garden windows, and the hangout in the middle"
     },
     {
       "path": "docs/catalog/commons.png",
-      "alt": "A team at work with a speech bubble from an agent that just finished, and Palú asleep in his bed"
+      "alt": "A team at its island of six desks, nameplates on the monitors, and a speech bubble from an agent that just finished"
     },
     {
       "path": "docs/catalog/desks.png",
-      "alt": "Desks showing agent states: a red flashing screen for blocked, an amber question mark for waiting, and specialists on stools"
+      "alt": "Two small teams sharing a room: a red screen for blocked, specialists on stools beside their agent, a dimmed sleeping desk"
     }
   ],
   "engines": {

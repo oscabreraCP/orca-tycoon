@@ -79,10 +79,46 @@ The worker resolves the Orca CLI automatically from `ORCA_CLI_COMMAND`, Orca's b
   too. Click him while he rests and he gets up and goes on to whatever he does next. He is only
   there for company and never changes what anyone does.
 - **Agents speak up.** When an agent finishes, a speech bubble shows the first line of its last
-  reply. When one starts waiting for you it says "Need you!", and when it gets stuck it says
-  "Stuck!".
+  reply. When one starts waiting for you an amber `?` bobs over its head and a thought bubble says
+  "Need you!"; click it and it says what the prompt asks, such as "Can I go ahead? I need your OK".
+  When it gets stuck it says "Stuck!".
 
 A status line along the top counts teams, staff, busy agents and how many need you.
+
+## Two looks
+
+The switch in the top right corner picks how the office looks, and the panel remembers it. The
+office opens in the Loft until you pick Brick.
+
+- **Loft** shows the office from the front and above, like a doll's house with its front wall
+  taken off. It is set up like a real office in an old concrete hall: tall steel windows onto a garden
+  at the far end, each team in a room closed off by navy curtains, and the hangout in the middle with
+  phone booths, a coffee counter, a sofa on a pink rug, foosball and a high table.
+- **Brick** is the flat office seen from straight above, as in the screenshot below and the
+  pictures further down.
+
+![Brick: five teams at their desks on rugs, specialists on stools beside their agents, and a commons band in the middle with the lounge, coffee corner, foosball table, calling booths and Palú asleep in his bed](docs/brick.png)
+
+In the loft, every worktree of a project owns a desk, also while it sleeps: then its chair stays
+empty and its nameplate is dimmed. A project shows up as soon as one of its worktrees has a live
+agent. Desks stand in islands of six that stay put while seats empty and fill; a project with three
+worktrees or fewer gets half an island, one row of three, and two such projects share a room, each
+island under its project's name. The front row sits with their backs to you, their screens facing you
+and the nameplate on the back of the chair. The back row faces you over their monitors, the nameplate
+on the back of the monitor below a status light. A desk keeps its place until its worktree goes,
+nobody moves up, and a new worktree takes the first free desk, beside its parent when that one is
+free. Specialists sit on an orange stool right beside their agent, two at most, with a `+` for more.
+The loft's hangout adds one thing to do on a break: a chat at the round white table, two or more
+round it taking turns to talk, never one alone.
+
+## Christmas
+
+From 15 November through 1 January a 🎄 button sits beside the switch, and the office dresses up in
+both looks: agents come in as Santa, an elf, a reindeer or the Grinch, Palú wears a Santa cap and a
+red nose, a big tree with presents stands in the commons or the hangout, the plants become little pines, and
+fairy lights and snow go up by the windows. In the loft a few desks and drawer blocks get a present
+too. It is on by default; press the button to turn it off, and the panel remembers. The rest of the
+year the button is gone and the office is plain.
 
 ## Reading the monitors
 
@@ -118,12 +154,14 @@ subagents. To see the whole office, the worker (`src/worker.ts`) runs `orca work
 instead. Orca's own sidebar and phone app draw from the same rows. The worker trims them to a small
 office model (`src/protocol.ts`): projects, seats, and each seat's specialists.
 
-The panel (`src/panel.html`, `src/panel.js`, `src/sprites.js`) polls the worker every 3 seconds,
+The panel (`src/panel.html`, `src/panel.js`, `src/sprites.js`, and `src/loft.js` for the loft) polls the worker every 3 seconds,
 the same rate Orca's phone app uses, and draws one canvas at 8 frames a second. Every sprite is
 drawn in code, so the plugin loads no assets and makes no network requests. The office fills the
 panel: it is drawn at the biggest whole pixel scale at which the whole building fits, and the
 corridors between rooms widen so the bottom wall reaches the panel's bottom edge. Only an office
-too crowded to fit at the smallest scale scrolls.
+too crowded to fit at the smallest scale scrolls, and then each frame paints only what is on screen.
+People find their way round the furniture with `src/walking.js`, which spreads the search over
+frames, so a big office where many people get up at once never holds up the panel.
 
 ### Permissions
 

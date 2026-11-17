@@ -364,6 +364,16 @@ export function waitingReplyPrompt(row: Row, runStops: readonly RunStopWait[] = 
   return null
 }
 
+/**
+ * Orca's verdict that a terminal agent sits on a prompt only a person can answer:
+ * `{source: 'prompt-text', reason, since?}`, `{source: 'title'}` or `{source: 'hook', since}`.
+ * Anything else (absent, null, a stray primitive) means it is not waiting on you.
+ */
+function waitOf(row: Row): Row | null {
+  const wait = row.agentWait
+  return wait !== null && typeof wait === 'object' && typeof (wait as Row).source === 'string' ? (wait as Row) : null
+}
+
 export function staffState(row: Row, runStops: readonly RunStopWait[] = []): StaffState {
   if (row.agentWait != null && (typeof row.agentWait !== 'object' || Object.keys(row.agentWait).length > 0)) {
     return 'waiting'
@@ -550,6 +560,13 @@ export function isLeaderStaff(row: Row, deskName: string): boolean {
   return false
 }
 
+const WAIT_LINES: Record<string, string> = {
+  'agent-approval-prompt': 'Can I go ahead? I need your OK',
+  'agent-hooks-review-prompt': 'Please review my hooks',
+  'agent-startup-menu-prompt': 'Pick an option to get me started',
+  'agent-update-prompt': 'I have an update to confirm'
+}
+
 /** The one line an agent says when you click it. */
 export function lineOf(
   row: Row,
@@ -566,6 +583,8 @@ export function lineOf(
       str((row.agentWait as Row)?.message) ??
       waitingReplyPrompt(row, runStops)
     if (prompt) return prompt
+    const reason = str(waitOf(row)?.reason)
+    if (reason && WAIT_LINES[reason]) return WAIT_LINES[reason]
     return /ask/i.test(String(row.toolName ?? '')) ? 'I have a question for you' : 'I need your input'
   }
   if (state === 'blocked') return "I'm stuck, can you help?"
