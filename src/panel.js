@@ -69,7 +69,8 @@ const DESK_W = SEAT_W + 4 // one agent's desk
 const STOOL_W = 9 // one stool at the end of a desk
 const MAX_STOOLS = 3 // beyond this the last stool carries a + marker
 const LINE_H = SEAT_H + LABEL_H + AISLE
-const TABLE_GAP = 6
+const MAX_ISLAND_SEATS = 3 // islands of 3 desks, matching Loft's 3-desk island rows
+const TABLE_GAP = 10 // clean corridor between desk islands
 const MIN_ROOM_W = (DESK_W + STOOL_W + 1) * 2 + PAD * 2 + GLASS * 2
 const COMMON_H = 34
 const WALK_SPEED = 1.5 // art pixels per frame
@@ -124,13 +125,13 @@ const dpr = () => window.devicePixelRatio || 1
 const THEMES = ['brick', 'loft']
 const THEME_KEY = 'office-tycoon.theme'
 const RENAMED = { classic: 'brick', dollhouse: 'loft' } // what the looks were called before
-let theme = 'loft' // a saved choice wins; a new viewer starts in the loft
+let theme = 'brick' // a saved choice wins; a new viewer starts in brick mode
 try {
   const saved = localStorage.getItem(THEME_KEY)
   const name = RENAMED[saved] ?? saved
   if (THEMES.includes(name)) theme = name
 } catch {
-  // no storage in this frame: start in the loft every time
+  // no storage in this frame: start in brick every time
 }
 const loft = () => theme === 'loft'
 
@@ -260,24 +261,23 @@ function segmentW(seat) {
   return DESK_W + stoolCount(seat.staff) * STOOL_W + 1
 }
 
-/** Splits families into tables no wider than the room, then packs tables into lines. */
+/** Splits seats into islands of up to 3 desks no wider than the room, then packs islands into lines. */
 function planRoom(floor, innerW) {
+  const allSeats = families(floor.desks).flatMap(familySeats)
   const tables = []
-  for (const family of families(floor.desks)) {
-    let table = []
-    let width = 0
-    for (const seat of familySeats(family)) {
-      const w = segmentW(seat)
-      if (table.length && width + w > innerW) {
-        tables.push(table)
-        table = []
-        width = 0
-      }
-      table.push(seat)
-      width += w
+  let table = []
+  let width = 0
+  for (const seat of allSeats) {
+    const w = segmentW(seat)
+    if (table.length >= MAX_ISLAND_SEATS || (table.length && width + w > innerW)) {
+      tables.push(table)
+      table = []
+      width = 0
     }
-    if (table.length) tables.push(table)
+    table.push(seat)
+    width += w
   }
+  if (table.length) tables.push(table)
   const tableW = (table) => table.reduce((n, seat) => n + segmentW(seat), 0)
   const lines = []
   let line = []
@@ -315,18 +315,18 @@ function computeLayout(cssW, scale, corridor = GAP) {
   const roomW = Math.floor((floorW - GAP * (cols - 1)) / cols)
   const innerW = roomW - GLASS * 2 - PAD * 2
 
-  // Plan every area first, so the commons band can go where it splits the floor in two.
-  // A team that would need three or more rows of desks in one column gets the whole floor width
-  // instead, so it spreads across rather than down. Biggest teams go first.
+  // Plan every area first. Only include floors that have active agents working.
   const fullInner = floorW - GLASS * 2 - PAD * 2
   const seatCount = (floor) => floor.desks.reduce((n, d) => n + d.staff.length, 0)
   const plans = (snapshot?.floors ?? [])
+    .filter((floor) => seatCount(floor) > 0)
     .map((floor) => {
       let plan = { ...planRoom(floor, innerW), w: roomW, inner: innerW, wide: false }
       if (cols > 1 && plan.lines.length >= 3) plan = { ...planRoom(floor, fullInner), w: floorW, inner: fullInner, wide: true }
       return { floor, ...plan, h: TOP + plan.lines.length * LINE_H + PAD }
     })
     .sort((a, b) => seatCount(b.floor) - seatCount(a.floor) || a.floor.repo.localeCompare(b.floor.repo))
+
   // Open areas need not line up: each one goes into the column that is shortest so far, and a
   // full-width team starts below everything placed before it.
   const pack = (list, top) => {
@@ -344,39 +344,22 @@ function computeLayout(cssW, scale, corridor = GAP) {
     })
     return { placed, bottom: Math.max(...colY) }
   }
-  // Split the areas so the band lands as close to the middle as it can.
-  let split = plans.length
-  let best = Infinity
-  for (let k = 1; k <= plans.length; k++) {
-    const above = pack(plans.slice(0, k), 0).bottom
-    const below = pack(plans.slice(k), 0).bottom
-    if (Math.abs(above - below) < best) {
-      best = Math.abs(above - below)
-      split = k
-    }
+
+  // If only 1 room in a multi-column floor, let it span wide so there are no huge empty columns beside it.
+  if (plans.length === 1 && cols > 1 && !plans[0].wide) {
+    const p = planRoom(plans[0].floor, fullInner)
+    plans[0] = { ...plans[0], ...p, w: floorW, inner: fullInner, wide: true, h: TOP + p.lines.length * LINE_H + PAD }
   }
 
-  // If top or bottom section only has 1 room in a multi-column floor, let it span wide so
-  // there are no huge empty columns beside it.
-  const topList = plans.slice(0, split)
-  const botList = plans.slice(split)
-  if (topList.length === 1 && cols > 1 && !topList[0].wide) {
-    const p = planRoom(topList[0].floor, fullInner)
-    topList[0] = { ...topList[0], ...p, w: floorW, inner: fullInner, wide: true, h: TOP + p.lines.length * LINE_H + PAD }
-  }
-  if (botList.length === 1 && cols > 1 && !botList[0].wide) {
-    const p = planRoom(botList[0].floor, fullInner)
-    botList[0] = { ...botList[0], ...p, w: floorW, inner: fullInner, wide: true, h: TOP + p.lines.length * LINE_H + PAD }
-  }
-  const top = pack(topList, OUTER + MARGIN)
+  // All team rooms go first (at the top).
+  const placed = pack(plans, OUTER + MARGIN)
 
-  // The commons band across the middle: lounge, coffee corner (water dispenser, coffee machine),
-  // kitchen, foosball, dog bed, and phone booths.
+  // The commons band ("gym", lounge, foosball, coffee, booths) sits at the bottom below all rooms.
   // Wide floors (>=260) fit everything side-by-side in a single 1-row band to eliminate dead space;
   // narrower floors stack them across 2 or 3 rows.
   const wide = floorW >= 150
   const singleRow = floorW >= 260
-  const bandY = plans.length ? top.bottom : OUTER + MARGIN
+  const bandY = plans.length ? placed.bottom : OUTER + MARGIN
   const rows = singleRow ? 1 : wide ? 2 : 3
   const bandH = COMMON_H * rows
   const gamesY = bandY + COMMON_H * (rows - 1)
@@ -466,10 +449,9 @@ function computeLayout(cssW, scale, corridor = GAP) {
     }
   }
 
-  const bottom = pack(plans.slice(split), bandY + bandH + corridor)
   const rooms = []
   const seats = []
-  for (const { plan, x, y: ry } of [...top.placed, ...bottom.placed]) {
+  for (const { plan, x, y: ry } of placed.placed) {
     const { floor, lines, tableW, h } = plan
     const room = { x, y: ry, w: plan.w, h, name: floor.repo, carpet: pick(CARPETS, floor.repo), notes: [] }
     lines.forEach((line, li) => {
@@ -490,7 +472,7 @@ function computeLayout(cssW, scale, corridor = GAP) {
     })
     rooms.push(room)
   }
-  const y = Math.max(bottom.bottom, bandY + bandH + corridor) - corridor + MARGIN
+  const y = bandY + bandH + MARGIN
   const building = { w: artW, h: y + OUTER, doorY }
   return { artW, artH: building.h, scale, building, rooms, seats, common }
 }
