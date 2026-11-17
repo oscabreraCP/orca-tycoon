@@ -1320,9 +1320,6 @@ function draw() {
   drawSelection()
 }
 
-  drawSelection()
-}
-
 /** The frame around the selected seat, and the speech bubbles. */
 function drawSelection() {
   const pickSeat = selected && seatOf(selected)
