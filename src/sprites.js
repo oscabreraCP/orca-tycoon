@@ -888,4 +888,45 @@ export function holidayLights(p, w, t = 0) {
   }
 }
 
+/** Treadmill, 16 x 14: dark frame, moving running belt, handrails, digital console display. */
+export function treadmill(p, t = 0, running = true) {
+  // Base & running track
+  p(0, 10, 16, 4, '#1d1e26')
+  p(2, 11, 12, 2, '#333547')
+  if (running) {
+    const shift = (t >> 1) % 4
+    for (let x = 2 + shift; x < 14; x += 4) p(x, 11, 2, 2, '#484b63')
+  }
+  // Front uprights & console
+  p(1, 2, 2, 9, '#8f8b9d')
+  p(1, 1, 4, 3, '#1d1e26')
+  p(2, 2, 2, 1, running ? '#4be08f' : '#73b3ff')
+  // Side handrails
+  p(3, 4, 10, 1, '#8f8b9d')
+  p(12, 5, 1, 5, '#8f8b9d')
+}
+
+/** Dumbbell rack, 14 x 12: two-tier angled metal stand with weights. */
+export function dumbbellRack(p) {
+  p(0, 11, 14, 1, '#2a2833')
+  p(1, 2, 2, 10, '#4a4857')
+  p(11, 2, 2, 10, '#4a4857')
+  p(1, 4, 12, 1, '#686578')
+  p(0, 8, 14, 1, '#686578')
+  const topColors = ['#ff5468', '#73b3ff', '#4be08f']
+  topColors.forEach((color, i) => {
+    const x = 2 + i * 4
+    p(x, 2, 1, 3, '#15131f')
+    p(x + 1, 3, 1, 1, color)
+    p(x + 2, 2, 1, 3, '#15131f')
+  })
+  const botColors = ['#f6b23c', '#9b5de5', '#2ec4b6']
+  botColors.forEach((color, i) => {
+    const x = 1 + i * 4
+    p(x, 6, 1, 3, '#15131f')
+    p(x + 1, 7, 1, 1, color)
+    p(x + 2, 6, 1, 3, '#15131f')
+  })
+}
+
 export { SKIN }

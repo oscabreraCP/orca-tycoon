@@ -20,6 +20,7 @@ import {
   christmasTree,
   coffeeMachine,
   desk,
+  dumbbellRack,
   festive,
   foosball,
   glyph,
@@ -36,6 +37,7 @@ import {
   specialist,
   stool,
   plant,
+  treadmill,
   walker,
   paluWalk,
   paluWalkFront,
@@ -354,11 +356,11 @@ function computeLayout(cssW, scale, corridor = GAP) {
   // All team rooms go first (at the top).
   const placed = pack(plans, OUTER + MARGIN)
 
-  // The commons band ("gym", lounge, foosball, coffee, booths) sits at the bottom below all rooms.
-  // Wide floors (>=260) fit everything side-by-side in a single 1-row band to eliminate dead space;
+  // The commons band (gym, lounge, foosball, coffee, booths) sits at the bottom below all rooms.
+  // Wide floors (>=310) fit everything side-by-side in a single 1-row band to eliminate dead space;
   // narrower floors stack them across 2 or 3 rows.
   const wide = floorW >= 150
-  const singleRow = floorW >= 260
+  const singleRow = floorW >= 310
   const bandY = plans.length ? placed.bottom : OUTER + MARGIN
   const rows = singleRow ? 1 : wide ? 2 : 3
   const bandH = COMMON_H * rows
@@ -384,14 +386,18 @@ function computeLayout(cssW, scale, corridor = GAP) {
       common.spots.push({ x: sx, y: bandY + 17, kind: 'coffee' })
     }
 
-    const fx = kitchenEnd + 12
+    const fx = kitchenEnd + 10
     common.foosball = { x: fx, y: bandY + 10 }
     common.foos = [
       { x: fx + 5, y: bandY + 10 - 14, kind: 'foosball', left: false, back: false },
       { x: fx + 15, y: bandY + 10 + 12, kind: 'foosball', left: false, back: true }
     ]
 
-    common.bowls = { x: fx + 34, y: bandY + 18 }
+    // Gym equipment in recreation area
+    common.treadmill = { x: fx + 32, y: bandY + 8 }
+    common.dumbbells = { x: fx + 52, y: bandY + 9 }
+
+    common.bowls = { x: fx + 70, y: bandY + 18 }
     common.bed = { x: common.bowls.x + 16, y: bandY + 14 }
 
     common.booths = []
@@ -418,12 +424,16 @@ function computeLayout(cssW, scale, corridor = GAP) {
     const kitchenEnd = cornerX + 24 + common.kitchen.w
     for (let sx = cornerX; sx + 8 <= Math.min(common.x + floorW, kitchenEnd + 8); sx += 9) common.spots.push({ x: sx, y: cornerY + 17, kind: 'coffee' })
 
-    const fx = common.x + entry + 12
+    const fx = common.x + entry + 8
     common.foosball = { x: fx, y: gamesY + 7 }
     common.foos = [
       { x: fx + 5, y: gamesY + 7 - 15, kind: 'foosball', left: false, back: false },
       { x: fx + 15, y: gamesY + 7 + 12, kind: 'foosball', left: false, back: true }
     ]
+    // Gym equipment in recreation area
+    common.treadmill = { x: fx + 32, y: gamesY + 5 }
+    common.dumbbells = { x: fx + 51, y: gamesY + 6 }
+
     common.booths = []
     const boothCount = wide ? 3 : 2
     for (let i = 0; i < boothCount; i++) {
@@ -434,16 +444,16 @@ function computeLayout(cssW, scale, corridor = GAP) {
     const sofaSeats = Math.min(6, Math.floor((loungeW - 12) / 9))
     for (let i = 0; i < sofaSeats; i++) common.sofa.push({ x: common.lounge.x + 6 + i * 9, y: common.lounge.y + 1, kind: 'lounge' })
 
-    const gapStart = fx + 34
+    const gapStart = fx + 68
     const gapEnd = common.x + floorW - boothCount * 16
     const gap = gapEnd - gapStart
-    if (gap >= 48) {
-      common.bowls = { x: gapStart + 8 + Math.floor((gap - 48) / 2), y: gamesY + 18 }
+    if (gap >= 40) {
+      common.bowls = { x: gapStart + 4, y: gamesY + 18 }
       common.bed = { x: common.bowls.x + 16, y: gamesY + 14 }
     } else {
       common.bed =
-        gap >= 30
-          ? { x: gapStart + Math.floor((gap - 24) / 2), y: gamesY + 14 }
+        gap >= 26
+          ? { x: gapStart + Math.floor((gap - 20) / 2), y: gamesY + 14 }
           : { x: common.lounge.x + common.lounge.w - 27, y: common.lounge.y + 16 }
       common.bowls = { x: common.lounge.x + 3, y: common.lounge.y + 19 }
     }
@@ -487,10 +497,10 @@ function fitLayout() {
   const cssH = Math.max(120, Math.floor(box.height))
   const perPx = Number.isInteger(dpr()) ? dpr() : 1 // scale steps per CSS pixel
   if (loft()) return fitLoft(cssW, cssH, perPx)
-  const minScale = cssW >= 300 ? 3 : 2
+  const minScale = 2
 
-  // Limit office height to 70% max of panel height, keeping bottom 30% clear
-  const maxTargetH = Math.floor(cssH * 0.70)
+  // Limit office height to 85% max of panel height, keeping bottom clear for lawn
+  const maxTargetH = Math.floor(cssH * 0.85)
 
   for (let n = MAX_SCALE * perPx; n / perPx >= minScale; n--) {
     const scale = n / perPx
@@ -674,6 +684,8 @@ function commonItems(c) {
     { box: [k.x, k.y - 6, k.w, 18], base: k.y + 12, draw: () => kitchen(painter(ctx, k.x, k.y), k.w) },
     ...c.booths.map((b) => ({ box: [b.bx, b.by, 13, 24], base: b.by + 24, draw: () => booth(painter(ctx, b.bx, b.by)) })),
     { box: [f.x - 2, f.y - 2, 32, 18], base: f.y + 14, draw: () => foosball(painter(ctx, f.x, f.y), tick, playing) },
+    ...(c.treadmill ? [{ box: [c.treadmill.x, c.treadmill.y, 16, 14], base: c.treadmill.y + 14, draw: () => treadmill(painter(ctx, c.treadmill.x, c.treadmill.y), tick, true) }] : []),
+    ...(c.dumbbells ? [{ box: [c.dumbbells.x, c.dumbbells.y, 14, 12], base: c.dumbbells.y + 12, draw: () => dumbbellRack(painter(ctx, c.dumbbells.x, c.dumbbells.y)) }] : []),
     { box: [cooler.x, cooler.y, 7, 16], base: cooler.y + 16, draw: () => waterCooler(painter(ctx, cooler.x, cooler.y), tick) },
     { box: [coffee.x, coffee.y, 9, 14], base: coffee.y + 14, draw: () => coffeeMachine(painter(ctx, coffee.x, coffee.y), tick) },
     ...decor
@@ -1019,6 +1031,8 @@ function floorObstacles(who) {
     [cooler.x, cooler.y + 10, 7, 6],
     [coffee.x, coffee.y + 8, 9, 6],
     [f.x, f.y, 28, 14],
+    ...(c.treadmill ? [[c.treadmill.x, c.treadmill.y + 6, 16, 8]] : []),
+    ...(c.dumbbells ? [[c.dumbbells.x, c.dumbbells.y + 4, 14, 8]] : []),
     [c.bowls.x, c.bowls.y + 1, 13, 3],
     ...c.booths.map((b) => [b.bx, b.by + 6, 13, 18])
   )
@@ -1059,6 +1073,8 @@ function paluSniffSpots() {
       fromLeft(k.x, k.y + 12), // the end of the kitchen counter
       fromLeft(f.x, f.y + 14), // the foosball table's legs
       fromRight(f.x + 28, f.y + 14),
+      ...(c.treadmill ? [fromLeft(c.treadmill.x, c.treadmill.y + 14)] : []),
+      ...(c.dumbbells ? [fromRight(c.dumbbells.x + 14, c.dumbbells.y + 12)] : []),
       ...c.booths.slice(-1).map((b) => fromLeft(b.bx, b.by + 24))
     )
   }
