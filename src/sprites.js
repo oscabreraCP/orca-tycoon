@@ -61,14 +61,31 @@ export function pick(list, seed, shift = 0) {
   return list[(hash(seed) >>> shift) % list.length]
 }
 
+let festiveOn = false
+
+export function setFestive(on) {
+  festiveOn = Boolean(on)
+}
+
+export function festive() {
+  return festiveOn
+}
+
+export function inChristmasSeason(date = new Date()) {
+  const month = date.getMonth()
+  const day = date.getDate()
+  return (month === 10 && day >= 15) || month === 11 || (month === 0 && day === 1)
+}
+
 let currentTheme = 'normal'
 
 export function setTheme(theme) {
   currentTheme = theme === 'christmas' ? 'christmas' : 'normal'
+  setFestive(theme === 'christmas')
 }
 
 export function getTheme() {
-  return currentTheme
+  return festiveOn ? 'christmas' : currentTheme
 }
 
 export const XMAS = {
@@ -103,12 +120,12 @@ export function look(seed) {
   const baseSkin = pick(SKIN, seed)
   const hair = pick(HAIR, seed, 8)
   const baseShirt = pick(SHIRT, seed, 16)
-  if (currentTheme !== 'christmas') {
-    return { skin: baseSkin, hair, shirt: baseShirt, costume: 'normal' }
+  if (!festiveOn && currentTheme !== 'christmas') {
+    return { skin: baseSkin, hair, shirt: baseShirt, costume: null }
   }
   const costume = costumeOf(seed)
   if (costume === 'grinch') {
-    return { skin: XMAS.grinchSkin, hair: '#4f9d3a', shirt: XMAS.santaRed, costume }
+    return { skin: XMAS.grinchSkin, hair: XMAS.grinchSkin, shirt: XMAS.santaRed, costume }
   }
   if (costume === 'santa') {
     return { skin: baseSkin, hair: C.white, shirt: XMAS.santaRed, costume }
@@ -162,8 +179,8 @@ export function crown(p, x, y) {
   p(x + 2, y + 1, 2, 1, RUBY)
 }
 
-/** Draws festive hat / antlers on a 6-wide head at (hx, hy). */
-function drawFestiveHeadgear(p, hx, hy, costume, skin, isLeader) {
+/** Draws festive hat / antlers on a 6-wide head at (hx, hy); `back`, seen from behind, leaves off the beard and nose. */
+export function festiveHeadgear(p, hx, hy, costume, back = false, isLeader = false) {
   if (isLeader) {
     crown(p, hx, hy - 1)
     p(hx + 1, hy - 2, 4, 1, XMAS.santaRed)
@@ -177,7 +194,7 @@ function drawFestiveHeadgear(p, hx, hy, costume, skin, isLeader) {
     p(hx + 1, hy - 2, 5, 1, XMAS.santaRed)
     p(hx + 3, hy - 3, 3, 1, XMAS.santaRed)
     p(hx + 6, hy - 2, 2, 2, C.white)
-    if (costume === 'santa') {
+    if (costume === 'santa' && !back) {
       // Fluffy white Santa beard
       p(hx, hy + 4, 6, 2, C.white)
       p(hx + 1, hy + 6, 4, 1, C.white)
@@ -189,8 +206,8 @@ function drawFestiveHeadgear(p, hx, hy, costume, skin, isLeader) {
     p(hx + 1, hy - 2, 4, 1, XMAS.elfGreen)
     p(hx + 2, hy - 3, 2, 1, XMAS.elfGreen)
     p(hx + 4, hy - 3, 1, 1, GOLD_LIGHT)
-    p(hx - 2, hy + 2, 1, 1, skin)
-    p(hx + 7, hy + 2, 1, 1, skin)
+    p(hx - 2, hy + 2, 1, 1, XMAS.elfDark)
+    p(hx + 7, hy + 2, 1, 1, XMAS.elfDark)
   } else if (costume === 'reindeer') {
     // Reindeer antlers and glowing red Rudolph nose
     p(hx - 2, hy - 2, 1, 3, XMAS.antler)
@@ -199,8 +216,12 @@ function drawFestiveHeadgear(p, hx, hy, costume, skin, isLeader) {
     p(hx + 7, hy - 2, 1, 3, XMAS.antler)
     p(hx + 8, hy - 3, 1, 2, XMAS.antler)
     p(hx + 6, hy - 3, 1, 1, XMAS.antler)
-    p(hx + 2, hy + 3, 2, 1, XMAS.rudolphNose)
+    if (!back) p(hx + 2, hy + 3, 2, 1, XMAS.rudolphNose)
   }
+}
+
+function drawFestiveHeadgear(p, hx, hy, costume, skin, isLeader) {
+  festiveHeadgear(p, hx, hy, costume, false, isLeader)
 }
 
 /** Chair and person, drawn before the desk so the desk hides their lap. */
@@ -216,7 +237,7 @@ export function person(p, staff, t, away = false) {
   if (away) return
   // shoulders and torso
   p(5, 9 + dy, 10, 5, shirt)
-  if (costume === 'santa' || costume === 'grinch' || (currentTheme === 'christmas' && staff.isLeader)) {
+  if (costume === 'santa' || costume === 'grinch' || (festive() && staff.isLeader)) {
     p(5, 9 + dy, 10, 5, XMAS.santaRed)
     p(6, 9 + dy, 8, 1, C.white)
     p(9, 9 + dy, 2, 5, C.white)
@@ -243,7 +264,7 @@ export function person(p, staff, t, away = false) {
     p(8, 4 + dy - bob, 1, 2, C.ink)
     p(11, 4 + dy - bob, 1, 2, C.ink)
   }
-  if (currentTheme === 'christmas') {
+  if (festive()) {
     drawFestiveHeadgear(p, 7, 1 + dy - bob, costume, skin, Boolean(staff.isLeader))
   } else if (staff.isLeader) {
     crown(p, 7, dy - bob)
@@ -341,7 +362,7 @@ export function specialist(p, spec, t) {
   p(5 + lean, 1, 1, 3, hair)
   p(2 + lean, 3, 1, 1, C.ink)
   p(1, 6, 6, 5, shirt)
-  if (currentTheme === 'christmas') {
+  if (festive()) {
     const hatColor = costume === 'elf' ? XMAS.elfGreen : XMAS.santaRed
     p(1 + lean, 0, 5, 1, C.white)
     p(1 + lean, -2, 4, 2, hatColor)
@@ -354,7 +375,7 @@ export function specialist(p, spec, t) {
 }
 
 export function plant(p, t = 0) {
-  if (currentTheme === 'christmas') {
+  if (festive()) {
     // Festive mini pine tree with red pot, gold star, and twinkling lights
     p(1, 6, 5, 3, XMAS.santaDark)
     p(1, 6, 5, 1, XMAS.santaRed)
@@ -430,7 +451,7 @@ export function lounger(p, staff, t, pose = 'nap') {
     p(2, 3 + (pose === 'read' ? 1 : 0), 1, 2, C.ink)
     p(5, 3 + (pose === 'read' ? 1 : 0), 1, 2, C.ink)
   }
-  if (currentTheme === 'christmas') {
+  if (festive()) {
     drawFestiveHeadgear(p, 1, 1 + slump, costume, skin, Boolean(staff.isLeader))
   } else if (staff.isLeader) {
     crown(p, 1, slump)
@@ -539,7 +560,7 @@ export function walker(p, staff, t, moving, left, badge = null, pose = 'mug') {
     p(left ? 2 : 3, 3 - bob, 1, 2, C.ink)
     p(left ? 4 : 5, 3 - bob, 1, 2, C.ink)
   }
-  if (currentTheme === 'christmas') {
+  if (festive()) {
     drawFestiveHeadgear(p, 1, 0 - bob, costume, pose === 'playBack' ? hair : skin, Boolean(staff.isLeader))
   } else if (staff.isLeader) {
     crown(p, 1, -1 - bob)
@@ -624,7 +645,7 @@ export function paluWalk(p, t, left) {
   // red collar with a gold tag
   m(12, 5, 3, 1, COLLAR)
   m(13, 6, 1, 1, TAG)
-  if (currentTheme === 'christmas') {
+  if (festive()) {
     m(12, -1, 4, 1, C.white)
     m(11, -3, 4, 2, XMAS.santaRed)
     m(10, -2, 1, 1, C.white)
@@ -653,7 +674,7 @@ export function paluSniff(p, t, left) {
   m(15, 4, 1, 1, C.ink)
   m(17, 6 - twitch, 1, 1, C.ink)
   m(12, 6, 2, 1, COLLAR)
-  if (currentTheme === 'christmas') {
+  if (festive()) {
     m(12, 1, 4, 1, C.white)
     m(11, -1, 4, 2, XMAS.santaRed)
     m(10, 0, 1, 1, C.white)
@@ -680,10 +701,10 @@ export function paluWalkFront(p, t) {
     p(3, 2, 1, 1, C.ink)
     p(6, 2, 1, 1, C.ink)
   }
-  p(4, 3, 2, 1, currentTheme === 'christmas' ? XMAS.rudolphNose : C.ink)
+  p(4, 3, 2, 1, festive() ? XMAS.rudolphNose : C.ink)
   p(3, 5, 4, 1, COLLAR)
   p(4, 6, 1, 1, TAG)
-  if (currentTheme === 'christmas') {
+  if (festive()) {
     p(2, -1, 6, 1, C.white)
     p(3, -3, 4, 2, XMAS.santaRed)
     p(7, -2, 1, 1, C.white)
@@ -709,7 +730,7 @@ export function paluWalkBack(p, t) {
   // the little stub of a tail on his rump, wiggling side to side
   p(4 + wag, 6, 2, 2, FUR_SHADE)
   p(4 + wag, 6, 2, 1, FUR)
-  if (currentTheme === 'christmas') {
+  if (festive()) {
     p(2, -1, 6, 1, C.white)
     p(3, -3, 4, 2, XMAS.santaRed)
     p(7, -2, 1, 1, C.white)
@@ -733,10 +754,10 @@ export function paluSit(p, t) {
     p(3, 2, 1, 1, C.ink)
     p(6, 2, 1, 1, C.ink)
   }
-  p(4, 3, 2, 1, currentTheme === 'christmas' ? XMAS.rudolphNose : C.ink)
+  p(4, 3, 2, 1, festive() ? XMAS.rudolphNose : C.ink)
   p(3, 5, 4, 1, COLLAR)
   p(4, 6, 1, 1, TAG)
-  if (currentTheme === 'christmas') {
+  if (festive()) {
     p(2, -1, 6, 1, C.white)
     p(3, -3, 4, 2, XMAS.santaRed)
     p(7, -2, 1, 1, C.white)
@@ -755,9 +776,9 @@ export function paluLie(p, t, asleep, left = false) {
   m(12, 1, 2, 4, FUR_SHADE)
   if (asleep) m(14, 2, 2, 1, C.ink)
   else m(15, 2, 1, 1, C.ink)
-  m(17, 3, 1, 1, currentTheme === 'christmas' ? XMAS.rudolphNose : C.ink)
+  m(17, 3, 1, 1, festive() ? XMAS.rudolphNose : C.ink)
   m(12, 4, 2, 1, COLLAR)
-  if (currentTheme === 'christmas') {
+  if (festive()) {
     m(12, -1, 4, 1, C.white)
     m(11, -3, 4, 2, XMAS.santaRed)
     m(10, -2, 1, 1, C.white)

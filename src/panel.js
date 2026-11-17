@@ -20,10 +20,11 @@ import {
   christmasTree,
   coffeeMachine,
   desk,
+  festive,
   foosball,
-  getTheme,
   glyph,
   holidayLights,
+  inChristmasSeason,
   kitchen,
   lounger,
   lounge,
@@ -31,7 +32,7 @@ import {
   person,
   pick,
   roleColor,
-  setTheme,
+  setFestive,
   specialist,
   stool,
   plant,
@@ -48,9 +49,10 @@ import {
   whiteboard,
   workstation
 } from './sprites.js'
+import { LOFT_MIN_W, loftGeometry, drawLoft, layoutLoft, lounging, outlinedAt, sitting, standing } from './loft.js'
 import { breakWalk, onTheMove, routePlanner, stepToward, visitorWalk, walkGrid } from './walking.js'
 
-const POLL_MS = 6000
+const POLL_MS = 3000
 const FRAME_MS = 125
 const BUBBLE_MS = 9000
 
@@ -75,6 +77,7 @@ const WALK_SPEED = 1.5 // art pixels per frame
 // building still fits the panel, so it fills a tall or wide panel instead of stopping at its own
 // height; it never drops below the width's minimum, so a crowded office scrolls as before.
 const MAX_SCALE = 8
+const SCROLLBAR = 16 // CSS pixels a vertical scrollbar can take from the panel's width
 const MIN_ART_W = MIN_ROOM_W + (OUTER + MARGIN) * 2 // narrower than this and not even the smallest room fits
 const MAX_CORRIDOR = GAP * 4 // the corridors between rooms widen to reach the panel's bottom, up to this
 // States in which an agent leaves its desk for the coffee corner until the state ends.
@@ -89,7 +92,9 @@ const ACTIVITIES = [
   { id: 'read', kind: 'lounge', pose: 'read', weight: 1.5 },
   { id: 'coffee', kind: 'coffee', weight: 2 },
   { id: 'foosball', kind: 'foosball', weight: 3 },
-  { id: 'call', kind: 'booth', weight: 2 }
+  { id: 'call', kind: 'booth', weight: 2 },
+  // a chat at the round table: only the loft has one
+  { id: 'chat', kind: 'table', weight: 2 }
 ]
 const ACTIVITY_MS = 60000
 // States in which an agent goes and naps on the lounge sofa, while there are seats.
@@ -111,20 +116,54 @@ const office = document.getElementById('office')
 const floor = document.getElementById('floor')
 const canvas = document.getElementById('plan')
 const ctx = canvas.getContext('2d')
+const tooltip = document.getElementById('tooltip')
 const dpr = () => window.devicePixelRatio || 1
 
-const themeSelect = document.getElementById('theme-select')
-const savedTheme = localStorage.getItem('orca-tycoon-theme') || 'christmas'
-setTheme(savedTheme)
-if (themeSelect) {
-  themeSelect.value = getTheme()
-  themeSelect.addEventListener('change', (e) => {
-    const nextTheme = e.target.value
-    setTheme(nextTheme)
-    localStorage.setItem('orca-tycoon-theme', nextTheme)
-    draw()
-  })
+// Two looks: Brick, the original flat office seen from straight above, and Loft, seen from the
+// front and above with the real office's curtained rooms and desk islands. The choice is kept.
+const THEMES = ['brick', 'loft']
+const THEME_KEY = 'office-tycoon.theme'
+const RENAMED = { classic: 'brick', dollhouse: 'loft' } // what the looks were called before
+let theme = 'loft' // a saved choice wins; a new viewer starts in the loft
+try {
+  const saved = localStorage.getItem(THEME_KEY)
+  const name = RENAMED[saved] ?? saved
+  if (THEMES.includes(name)) theme = name
+} catch {
+  // no storage in this frame: start in the loft every time
 }
+const loft = () => theme === 'loft'
+
+// Christmas dresses either look from 15 Nov through 1 Jan: the tree button shows only then, on by
+// default, and a viewer who turns it off keeps it off.
+const FESTIVE_KEY = 'office-tycoon.christmas'
+const festiveSwitch = document.getElementById('christmas')
+let festivePick = null // 'on' or 'off' once the viewer has pressed the button
+try {
+  festivePick = localStorage.getItem(FESTIVE_KEY)
+} catch {
+  // no storage in this frame: on in season, every time
+}
+function applySeason() {
+  const season = inChristmasSeason()
+  setFestive(season && festivePick !== 'off')
+  if (festiveSwitch) {
+    festiveSwitch.hidden = !season
+    festiveSwitch.querySelector('button')?.setAttribute('aria-pressed', String(festive()))
+  }
+}
+applySeason()
+setInterval(applySeason, 60_000) // an office left open crosses into or out of the season
+festiveSwitch?.querySelector('button')?.addEventListener('click', () => {
+  festivePick = festive() ? 'off' : 'on'
+  try {
+    localStorage.setItem(FESTIVE_KEY, festivePick)
+  } catch {
+    // kept for this session only
+  }
+  applySeason()
+  draw()
+})
 
 let snapshot = null
 let layout = { artW: 0, artH: 0, scale: 3, building: null, rooms: [], seats: [], common: null }
@@ -150,7 +189,7 @@ function since(ms) {
 
 /** What a seat's nameplate reads: the worker picks it from the conversation and workspace names. */
 function nameplate(seat) {
-  return seat.staff.label || seat.desk.name.split(/[\s/]+/)[0] || 'workspace'
+  return seat.staff.label || seat.desk.label || seat.desk.name.split(/[\s/]+/)[0] || 'workspace'
 }
 
 /** Rich label for a seat: prefers ticket, issue #, clean tab name, then branch. */
@@ -465,6 +504,7 @@ function fitLayout() {
   const cssW = Math.max(180, Math.floor(box.width))
   const cssH = Math.max(120, Math.floor(box.height))
   const perPx = Number.isInteger(dpr()) ? dpr() : 1 // scale steps per CSS pixel
+  if (loft()) return fitLoft(cssW, cssH, perPx)
   const minScale = cssW >= 300 ? 3 : 2
 
   // Limit office height to 70% max of panel height, keeping bottom 30% clear
@@ -489,6 +529,24 @@ function fitLayout() {
     }
   }
   return computeLayout(cssW, minScale, GAP)
+}
+
+/** The loft at the biggest scale at which it fits, its floor stretched to the panel's bottom. */
+function fitLoft(cssW, cssH, perPx) {
+  const helpers = { families, familySeats, activeSpecialists }
+  const minScale = 2
+  for (let n = MAX_SCALE * perPx; n / perPx >= minScale; n--) {
+    const scale = n / perPx
+    if (Math.floor(cssW / scale) < LOFT_MIN_W && scale > minScale) continue
+    const fit = layoutLoft(snapshot, cssW, scale, helpers)
+    const rows = Math.floor(cssH / scale)
+    if (fit.artH <= rows) {
+      fit.artH = fit.building.h = rows
+      return fit
+    }
+  }
+  // too tall for the panel at any scale: it scrolls, so leave room for the scrollbar across
+  return layoutLoft(snapshot, cssW - SCROLLBAR, minScale, helpers)
 }
 
 /**
@@ -563,7 +621,7 @@ function drawBuilding(p) {
   }
   // front door in the left wall, level with the commons band, with a doormat
   const dy = layout.building.doorY
-  const isXmas = getTheme() === 'christmas'
+  const isXmas = festive()
   p(0, dy - 2, OUTER, 19, FLOOR.plank)
   p(0, dy - 3, OUTER, 1, BRICK.dark)
   p(0, dy + 17, OUTER, 1, BRICK.dark)
@@ -605,7 +663,7 @@ function drawRoom(p, room) {
   p(x + 3, y + 3, Math.min(w - 40, 56), 7, '#2a2633')
   const boardW = Math.min(26, w - 70)
   if (boardW > 8) whiteboard(painter(ctx, x + w - boardW - 4, y + 3), boardW, room.notes)
-  if (getTheme() === 'christmas') {
+  if (festive()) {
     holidayLights(painter(ctx, x + 2, y), w - 4, tick)
   }
 }
@@ -638,7 +696,7 @@ function commonItems(c) {
     { box: [coffee.x, coffee.y, 9, 14], base: coffee.y + 14, draw: () => coffeeMachine(painter(ctx, coffee.x, coffee.y), tick) },
     ...decor
   ]
-  if (getTheme() === 'christmas') {
+  if (festive()) {
     const tx = l.x - 11
     const ty = l.y + 3
     items.push({
@@ -707,6 +765,7 @@ function drawCommon() {
 
 /** Where an agent stands when it gets up: the aisle in front of its seat. */
 function homeOf(seat) {
+  if (loft()) return loftGeometry.homeOf(seat)
   return { x: seat.x + 6, y: seat.y + SEAT_H + LABEL_H - 4 }
 }
 
@@ -743,12 +802,12 @@ function slotOf(key, now) {
 /** The spot for every agent on a break; full places pass on, nobody plays foosball alone. */
 function assignBreaks(common) {
   const now = Date.now()
-  const pools = { lounge: common.sofa, coffee: common.spots, foosball: common.foos, booth: common.booths }
+  const pools = { lounge: common.sofa, coffee: common.spots, foosball: common.foos, booth: common.booths, table: common.table ?? [] }
   const onBreak = layout.seats.filter((s) => AWAY_STATES.has(s.staff.state) || LOUNGE_STATES.has(s.staff.state))
   const onKeys = new Set(onBreak.map((s) => s.key))
   for (const key of assigned.keys()) if (!onKeys.has(key)) assigned.delete(key)
 
-  const taken = { lounge: new Set(), coffee: new Set(), foosball: new Set(), booth: new Set() }
+  const taken = { lounge: new Set(), coffee: new Set(), foosball: new Set(), booth: new Set(), table: new Set() }
   const pending = []
   for (const seat of onBreak) {
     const slot = slotOf(seat.key, now)
@@ -777,9 +836,9 @@ function assignBreaks(common) {
       .map((a, i) => ({ a, score: -Math.log(1e-9 + hashOf(`${seat.key}|${slot}|${i}`)) / a.weight }))
       .sort((x, y) => x.score - y.score)
       .map((r) => r.a)
-  const place = (p, skip) => {
+  const place = (p, skip = []) => {
     for (const a of ranked(p)) {
-      if (a.kind === skip) continue
+      if (skip.includes(a.kind)) continue
       const index = pools[a.kind].findIndex((_, i) => !taken[a.kind].has(i))
       if (index >= 0) {
         taken[a.kind].add(index)
@@ -789,15 +848,18 @@ function assignBreaks(common) {
     }
   }
   pending.sort((x, y) => hashOf(`${x.seat.key}|${x.slot}|turn`) - hashOf(`${y.seat.key}|${y.slot}|turn`))
-  for (const p of pending) place(p, null)
-  // Nobody plays foosball alone: a lone player picks something else.
-  const players = [...assigned].filter(([, e]) => e.kind === 'foosball')
-  if (players.length === 1) {
+  for (const p of pending) place(p)
+  // Nobody plays foosball alone, and nobody chats alone: a lone one picks something else.
+  // Re-placed away from both, so nobody bounces from one lonely game into the other.
+  const TOGETHER = ['foosball', 'table']
+  for (const kind of TOGETHER) {
+    const players = [...assigned].filter(([, e]) => e.kind === kind)
+    if (players.length !== 1) continue
     const [key, e] = players[0]
     assigned.delete(key)
-    taken.foosball.delete(e.index)
+    taken[kind].delete(e.index)
     const seat = onBreak.find((s) => s.key === key)
-    place({ seat, slot: e.slot, sleepy: LOUNGE_STATES.has(seat.staff.state) }, 'foosball')
+    place({ seat, slot: e.slot, sleepy: LOUNGE_STATES.has(seat.staff.state) }, TOGETHER)
   }
 
   activityOf.clear()
@@ -834,6 +896,7 @@ const DOOR_LANE_X = OUTER + 1
 
 /** Where a specialist waits in the aisle before stepping onto the stool, and the stool itself. */
 function stoolStops(seat, stoolAt) {
+  if (loft()) return loftGeometry.stoolStops(seat, stoolAt)
   return { aisle: { x: stoolAt.x - 1, y: seat.y + SEAT_H + LABEL_H - 8 }, on: { x: stoolAt.x - 1, y: seat.y + 6 } }
 }
 
@@ -917,6 +980,7 @@ function paluBedSpot() {
 
 /** Where he lies when visiting a desk: on the floor in front of it, below the nameplate. */
 function paluDeskSpot(seat) {
+  if (loft()) return loftGeometry.paluDeskSpot(seat)
   return { x: seat.x + 1, y: seat.y + SEAT_H + LABEL_H }
 }
 
@@ -948,6 +1012,7 @@ const FEET = {
 
 /** The floor each obstacle stands on: [x, y, w, h], in art pixels. */
 function floorObstacles(who) {
+  if (loft()) return loftGeometry.obstacles(layout)
   const c = layout.common
   // a person in the aisle stands tall, feet level with the heads of the next row down: for them
   // a desk starts a little lower
@@ -989,6 +1054,10 @@ function floorClear(box, blocks) {
  * furniture. Each is where he stands, side-on, with his nose just touching the thing.
  */
 function paluSniffSpots() {
+  if (loft()) {
+    const blocks = floorObstacles('palu')
+    return loftGeometry.sniffSpots(layout).filter((s) => floorClear(FEET.palu.side(s.x, s.y), blocks))
+  }
   const c = layout.common
   // nose to the left of him touching x (facing left), or to the right (facing right); paws on row y
   const fromRight = (x, base) => ({ x, y: base - 9, left: true })
@@ -1085,6 +1154,11 @@ function paluPath(to, viaAisle = false) {
   return path && [...path, { x: to.x, y: to.y }]
 }
 
+const paluWanderSpot = () => ({
+  x: Math.round(between(OUTER + 4, layout.artW - OUTER - 22)),
+  y: paluLanes()[Math.random() < 0.5 ? 0 : 1]
+})
+
 /** Where he stands to eat (nose in the kibble, from the left) or drink (from the right). */
 function paluBowlSpots() {
   const b = layout.common.bowls
@@ -1097,14 +1171,8 @@ function paluBowlSpots() {
   return clear.length ? clear : spots.slice(0, 1)
 }
 
-function paluWanderSpot() {
-  const x = Math.round(between(OUTER + 4, layout.artW - OUTER - 22))
-  const y = paluLanes()[Math.random() < 0.5 ? 0 : 1]
-  return { x, y }
-}
-
 function paluNext() {
-  const atDesk = layout.seats.filter((s) => !walkers.has(s.key))
+  const atDesk = layout.seats.filter((s) => !walkers.has(s.key) && (!loft() || loftGeometry.visitable(s)))
   const sniffs = paluSniffSpots()
   const options = [{ act: 'wander', w: 2 }, { act: 'bed', w: 1 }, { act: 'eat', w: 1 }]
   if (sniffs.length) options.push({ act: 'sniff', w: 3 })
@@ -1206,15 +1274,16 @@ function paluBox() {
   return { box: [x, y, 18, 6], base: y + 6 }
 }
 
-function drawPalu() {
+function drawPalu(base = painter(ctx)) {
   if (!palu) return
-  const at = painter(ctx, Math.round(palu.x), Math.round(palu.y))
-  const upright = painter(ctx, Math.round(palu.x) + 4, Math.round(palu.y) - 1)
+  const off = (ox, oy) => (x, y, w, h, c) => base(Math.round(palu.x) + ox + x, Math.round(palu.y) + oy + y, w, h, c)
+  const at = off(0, 0)
+  const upright = off(4, -1)
   if (palu.path.length && palu.dir === 'down') paluWalkFront(upright, tick)
   else if (palu.path.length && palu.dir === 'up') paluWalkBack(upright, tick)
   else if (palu.path.length) paluWalk(at, tick, palu.left)
   else if (palu.act === 'sniff' || palu.act === 'eat') paluSniff(at, tick, palu.restLeft)
-  else if (palu.act === 'wander') paluSit(painter(ctx, Math.round(palu.x) + 4, Math.round(palu.y) - 2), tick)
+  else if (palu.act === 'wander') paluSit(off(4, -2), tick)
   else paluLie(at, tick, true, palu.restLeft)
 }
 
@@ -1223,7 +1292,7 @@ function drawSeat(seat) {
   person(p, seat.staff, tick, walkers.has(seat.key))
 }
 
-function drawText(text, cssX, cssY, maxW, color, { weight = 600, align = 'left', size = 11 } = {}) {
+function drawText(text, cssX, cssY, maxW, color, { weight = 600, align = 'left', size = 12, chip = null } = {}) {
   cssTransform()
   ctx.font = `${weight} ${size}px ui-monospace, 'SF Mono', Menlo, monospace`
   ctx.textBaseline = 'middle'
@@ -1233,6 +1302,14 @@ function drawText(text, cssX, cssY, maxW, color, { weight = 600, align = 'left',
   if (ctx.measureText(label).width > maxW) {
     while (label.length > 1 && ctx.measureText(label + '...').width > maxW) label = label.slice(0, -1)
     label += '...'
+  }
+  if (chip) {
+    // a little plate behind the text, as wide as the text
+    const w = Math.ceil(ctx.measureText(label).width) + 6
+    const left = align === 'center' ? cssX - w / 2 : cssX - 3
+    ctx.fillStyle = chip
+    ctx.fillRect(Math.round(left), Math.round(cssY - size / 2 - 2), w, size + 3)
+    ctx.fillStyle = color
   }
   ctx.fillText(label, cssX, cssY)
   ctx.textAlign = 'left'
@@ -1246,7 +1323,8 @@ function bubbleAnchor(key) {
   const seat = layout.seats.find((u) => u.key === key)
   if (!seat) return null
   const w = walkers.get(seat.key)
-  return w ? { x: w.x + 4, y: w.y - 1 } : { x: seat.x + SEAT_W / 2, y: seat.y }
+  if (w) return { x: w.x + 4, y: w.y - 1 }
+  return loft() ? loftGeometry.seatAnchor(seat) : { x: seat.x + SEAT_W / 2, y: seat.y }
 }
 
 function drawBubble(anchor, text, kind = 'speech') {
@@ -1303,7 +1381,81 @@ function drawBubble(anchor, text, kind = 'speech') {
   artTransform()
 }
 
+/** Everyone up and about, in the loft: each with where to draw them and the row of their feet. */
+function loftPeople() {
+  const people = []
+  for (const seat of layout.seats) {
+    const w = walkers.get(seat.key)
+    if (!w) continue
+    const x = Math.round(w.x)
+    const y = Math.round(w.y)
+    const kind = w.mode === 'away' ? w.activity?.kind ?? null : null
+    const m = { key: seat.key, kind, spot: w.spot, base: y + 15 }
+    if (kind === 'lounge') {
+      m.base = (w.spot.sofa ? w.spot.sofa.y + 13 : y + 13) + 0.5
+      m.paint = (p) => lounging(p, x, y, seat.staff, tick, w.activity.pose)
+    } else if (kind === 'booth') m.paint = (p) => standing(p, x, y, seat.staff, tick, false, w.left, null, 'phone')
+    else if (kind === 'foosball') m.paint = (p) => standing(p, x, y, seat.staff, tick, false, w.left, null, w.spot.back ? 'playBack' : 'play')
+    else if (kind === 'table') {
+      // the one who has the word changes every few seconds, round the table; the chair comes
+      // from the layout on screen, which may be newer than the spot the walker set out for
+      const chair = layout.common.table?.[assigned.get(seat.key)?.index]?.chair ?? w.spot.chair
+      const seated = layout.seats.filter((s) => walkers.get(s.key)?.mode === 'away' && walkers.get(s.key)?.activity?.kind === 'table')
+      const talking = seated.length > 0 && seated[Math.floor(tick / 24) % seated.length] === seat
+      m.chair = chair
+      m.base = chair.y + 11 + (chair.facing ? 0.5 : -0.5)
+      m.paint = (p) => sitting(p, chair, seat.staff, tick, talking)
+    }
+    else m.paint = (p) => standing(p, x, y, seat.staff, tick, onTheMove(w), w.left)
+    people.push(m)
+  }
+  for (const [key, v] of visitors) {
+    if (v.mode === 'seated' || v.wait > 0) continue
+    const x = Math.round(v.x)
+    const y = Math.round(v.y)
+    people.push({ key, kind: null, base: y + 15, paint: (p) => standing(p, x, y, v.spec, tick, onTheMove(v), v.left, roleColor(v.spec.role)) })
+  }
+  return people
+}
+
+function drawLoftScene() {
+  artTransform()
+  // Only the part of the office the panel shows: a big team's loft is many times taller than the
+  // panel, and painting all of it eight times a second froze the panel.
+  const top = office.scrollTop / layout.scale
+  const view = { y0: top, y1: top + office.clientHeight / layout.scale }
+  const dog = paluBox()
+  const people = loftPeople()
+  drawLoft(ctx, layout, {
+    tick,
+    away: (seat) => walkers.has(seat.key),
+    seatedAt: (seat) =>
+      [...visitors]
+        .filter(([key, v]) => v.mode === 'seated' && key.startsWith(`${seat.key}|`))
+        .map(([, v]) => ({ spec: v.spec, index: seat.stools.findIndex((st) => st.x === v.stoolAt.x && st.y === v.stoolAt.y) }))
+        .filter((s) => s.index >= 0),
+    people,
+    sittersAt: new Set(people.filter((m) => m.kind === 'table').map((m) => m.chair)),
+    palu: dog && { base: dog.base, paint: (p) => outlinedAt(p, 0, 0, (q) => drawPalu(q)) },
+    bowls: (p, b) => outlinedAt(p, b.x, b.y, (q) => dogBowls(q, tick)),
+    nameplate: (seat) => {
+      const isLead = Boolean(seat.staff.isLeader)
+      return (isLead ? '👑 ' : '') + nameplate(seat)
+    },
+    drawText: (...args) => {
+      drawText(...args)
+      artTransform()
+    },
+    view
+  })
+}
+
 function draw() {
+  if (loft()) {
+    drawLoftScene()
+    drawSelection()
+    return
+  }
   artTransform()
   const p = painter(ctx)
   drawBuilding(p)
@@ -1338,13 +1490,13 @@ function draw() {
     if (kind === 'lounge') paint = () => lounger(at, seat.staff, tick, w.activity.pose)
     else if (kind === 'booth') paint = () => walker(at, seat.staff, tick, false, w.left, null, 'phone')
     else if (kind === 'foosball') paint = () => walker(at, seat.staff, tick, false, w.left, null, w.spot.back ? 'playBack' : 'play')
-    else paint = () => walker(at, seat.staff, tick, w.path.length > 0, w.left)
+    else paint = () => walker(at, seat.staff, tick, onTheMove(w), w.left)
     scene.push({ base: Math.round(w.y) + 15, inBooth: kind === 'booth', paint })
   }
   for (const [key, v] of visitors) {
     if (v.mode === 'seated' || v.wait > 0 || behind.has(key)) continue
     const at = painter(ctx, Math.round(v.x), Math.round(v.y))
-    scene.push({ base: Math.round(v.y) + 15, paint: () => walker(at, v.spec, tick, true, v.left, roleColor(v.spec.role)) })
+    scene.push({ base: Math.round(v.y) + 15, paint: () => walker(at, v.spec, tick, onTheMove(v), v.left, roleColor(v.spec.role)) })
   }
   const dog = behind.has('palu') ? null : paluBox()
   // on a tie Palú goes first: he is low to the ground, so the person's legs cover him
@@ -1365,12 +1517,18 @@ function draw() {
     drawText(label, (seat.x + SEAT_W / 2) * s, (seat.y + SEAT_H + 2.5) * s, (DESK_W + 4) * s, color, { align: 'center', size: 10, weight: isLead ? 700 : 600 })
   }
 
+  drawSelection()
+}
+
+/** The frame around the selected seat, and the speech bubbles. */
+function drawSelection() {
   const pickSeat = selected && seatOf(selected)
   if (pickSeat) {
     artTransform()
+    const [x, y, w, h] = seatBoxOf(pickSeat)
     ctx.strokeStyle = '#ffffff'
     ctx.lineWidth = 0.5
-    ctx.strokeRect(pickSeat.x + 0.25, pickSeat.y + 0.25, SEAT_W - 0.5, SEAT_H + LABEL_H - 0.5)
+    ctx.strokeRect(x + 0.25, y + 0.25, w - 0.5, h - 0.5)
   }
 
   const now = Date.now()
@@ -1662,6 +1820,11 @@ function sayingOf(key) {
   return staff ? staff.line ?? staff.said ?? stateLabel(staff.state) : ''
 }
 
+/** The box that is a seat on screen, for clicks and the selection frame. */
+function seatBoxOf(seat) {
+  return loft() ? loftGeometry.seatBox(seat) : [seat.x, seat.y, SEAT_W, SEAT_H + LABEL_H]
+}
+
 /** Who is under the point: a person first, wherever they are, then a desk. */
 function whoAt(ax, ay) {
   const inBox = ([x, y, w, h]) => ax >= x && ax < x + w && ay >= y && ay < y + h
@@ -1679,14 +1842,8 @@ function whoAt(ax, ay) {
   // the one drawn last (nearest the bottom) is on top
   const person = people.sort((a, b) => b.base - a.base).find((m) => inBox(m.box))
   if (person) return person.key
-  return layout.seats.find((u) => inBox([u.x, u.y, SEAT_W, SEAT_H + LABEL_H]))?.key ?? null
+  return layout.seats.find((u) => inBox(seatBoxOf(u)))?.key ?? null
 }
-
-// Floating hover tooltip for seats, specialists and Palú
-const tooltip = document.createElement('div')
-tooltip.id = 'seat-tooltip'
-tooltip.style.cssText = 'position:fixed;display:none;pointer-events:none;z-index:9999;padding:6px 10px;background:var(--orca-popover,#1f1c2b);color:var(--orca-popover-foreground,#eee);border:1px solid var(--orca-muted,#3d3755);border-radius:6px;font-size:11px;line-height:1.45;box-shadow:0 4px 14px rgba(0,0,0,0.45);max-width:320px;backdrop-filter:blur(8px);'
-document.body.appendChild(tooltip)
 
 function escapeHtml(s) {
   return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
@@ -1815,6 +1972,35 @@ canvas.addEventListener('dblclick', (event) => {
   }
 })
 
+/** Switches the look: everyone is placed afresh in the new office, nobody walks across. */
+function setTheme(next) {
+  if (!THEMES.includes(next) || next === theme) return
+  theme = next
+  try {
+    localStorage.setItem(THEME_KEY, theme)
+  } catch {
+    // kept for this session only
+  }
+  walkers.clear()
+  visitors.clear()
+  assigned.clear()
+  palu = null
+  scenePrimed = false
+  selected = null
+  opening = null
+  renderThemes()
+  renderDetail()
+  hideCard()
+  resize()
+}
+
+function renderThemes() {
+  for (const button of document.querySelectorAll('#themes button')) button.setAttribute('aria-pressed', String(button.dataset.theme === theme))
+}
+
+for (const button of document.querySelectorAll('#themes button')) button.addEventListener('click', () => setTheme(button.dataset.theme))
+renderThemes()
+
 let pollTimer = null
 let polling = false
 async function poll() {
@@ -1852,6 +2038,20 @@ setInterval(() => {
 // The office's box follows the panel, not the canvas, so a relayout cannot re-fire this. Lay out
 // on the next frame, outside the observer callback.
 new ResizeObserver(() => requestAnimationFrame(resize)).observe(office)
+// the canvas shows only what is on screen, so scrolling draws the new part at once
+let scrolling = false
+office.addEventListener(
+  'scroll',
+  () => {
+    if (scrolling) return
+    scrolling = true
+    requestAnimationFrame(() => {
+      scrolling = false
+      draw()
+    })
+  },
+  { passive: true }
+)
 
 showMessage('Opening the office...')
 poll()

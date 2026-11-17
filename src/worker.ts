@@ -680,27 +680,35 @@ export function toSnapshot(
     ...worktreesOf(raw).map((w) => ({ w, environment: null })),
     ...servers.flatMap((s) => worktreesOf(s.raw).map((w) => ({ w, environment: s.environment })))
   ]
-  const live = all.filter(({ w }) => w.isArchived !== true && Array.isArray(w.agents) && w.agents.length > 0)
   const idOf = (id: string | null, environment: string | null) => (id && environment ? `${environment}|${id}` : id)
   const repoOf = (w: Row) => str(w.repo) ?? 'Other'
+  const busy = (w: Row) => Array.isArray(w.agents) && w.agents.length > 0
+  // A project with a live agent brings all its worktrees that are not archived, the sleeping ones
+  // too, so the loft can give each its desk; a project nobody works in stays off the floor.
+  const open = all.filter(({ w }) => w.isArchived !== true)
+  const working = new Set(open.filter(({ w }) => busy(w)).map(({ w }) => repoOf(w)))
+  const live = open.filter(({ w }) => working.has(repoOf(w)))
   const nameOf = (w: Row) => str(w.displayName) ?? str(w.branch)?.replace(/^refs\/heads\//, '') ?? 'workspace'
   // names several desks in one project share tell those desks apart from nothing
+  // an agent's nameplate weighs its name against the other busy desks, as it always did; a desk's
+  // own nameplate, shown while it sleeps, against every desk on the floor
   const seen = new Map<string, number>()
+  const seenAll = new Map<string, number>()
   for (const { w } of live) {
     const key = `${repoOf(w)}\n${nameOf(w).toLowerCase()}`
-    seen.set(key, (seen.get(key) ?? 0) + 1)
+    seenAll.set(key, (seenAll.get(key) ?? 0) + 1)
+    if (busy(w)) seen.set(key, (seen.get(key) ?? 0) + 1)
   }
   const floors = new Map<string, Desk[]>()
   for (const { w, environment } of live) {
-    const agents = w.agents as Row[]
+    const agents = busy(w) ? (w.agents as Row[]) : []
     const repo = repoOf(w)
     const branch = str(w.branch)?.replace(/^refs\/heads\//, '') ?? null
     const name = nameOf(w)
     const defaultBranch = str(w.defaultBranch)?.replace(/^(?:refs\/heads\/|origin\/)/, '') ?? null
-    const generic =
-      w.isMainWorktree === true ||
-      isGenericName(name, defaultBranch) ||
-      (seen.get(`${repo}\n${name.toLowerCase()}`) ?? 0) > 1
+    const plain = w.isMainWorktree === true || isGenericName(name, defaultBranch)
+    const generic = plain || (seen.get(`${repo}\n${name.toLowerCase()}`) ?? 0) > 1
+    const deskGeneric = plain || (seenAll.get(`${repo}\n${name.toLowerCase()}`) ?? 0) > 1
     const stopsForHost = environment ? [] : runStops
     const desk: Desk = {
       id: idOf(String(w.worktreeId ?? ''), environment) ?? '',
@@ -709,6 +717,7 @@ export function toSnapshot(
       parentId: idOf(str(w.parentWorktreeId), environment),
       environment,
       host: environment ? str((w.environment as Row | null)?.name) ?? environment : null,
+      label: labelOf(null, name, deskGeneric),
       staff: agents.map((row) => toStaff(row, name, generic, stopsForHost))
     }
     const list = floors.get(repo) ?? []

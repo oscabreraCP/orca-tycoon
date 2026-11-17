@@ -39,6 +39,7 @@ export type Desk = {
   environment: string | null
   /** That server's name, for the detail box; null on this machine. */
   host: string | null
+  label?: string | null
   staff: Staff[]
 }
 
