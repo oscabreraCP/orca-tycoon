@@ -291,8 +291,8 @@ export function hangout(fx, y, fw) {
     add('tree', { x: R - 82, y: y + 47 }) // in season, between the foosball and the gym
     add('plant', { x: rug.x + 2, y: y + 2 })
     add('plant', { x: R - 22, y: y + 86 })
-    const run = add('treadmill', { x: R - 50, y: y + 52 })
-    const gym = add('dumbbells', { x: R - 28, y: y + 54 })
+    const run = add('treadmill', { x: R - 50, y: y + 54 })
+    const gym = add('dumbbells', { x: R - 28, y: y + 56 })
     c.bed = { x: x + 20, y: y + 86 }
     c.bowls = { x: x + 4, y: y + 91 }
     c.doorY = y + 56
@@ -300,8 +300,8 @@ export function hangout(fx, y, fw) {
   } else {
     // The right edge stays clear: it lines up with the gaps in the curtain lines, so people walk
     // straight down from their rooms. Booth, fridge and counter stand against the curtain, the
-    // sofa corner below them, foosball, Palú's corner and gym equipment below that.
-    c.h = 140
+    // sofa corner below them, foosball, tree and gym on one line, and Palú below them.
+    c.h = 144
     const clear = R - 34
     const booths = [add('booth', { x: x + 4, floor: y + 46 })]
     add('fridge', { x: x + 28, floor: y + 21 })
@@ -313,18 +313,19 @@ export function hangout(fx, y, fw) {
     const sofa = add('sofa', { x: rug.x + 6, y: rug.y + 4, w: sofaW })
     add('coffeeTable', { x: sofa.x + Math.floor(sofa.w / 2) - 12, y: rug.y + 24 })
     const chairs = tableGroup(add, rug.x + rug.w - 40, rug.y + 2)
-    // the last row: foosball, Palú's corner, tree, and gym equipment
-    const foos = add('foosball', { x: x + 8, y: y + 112 })
-    c.bed = { x: x + 40, y: y + 118 }
-    c.bowls = { x: x + 42, y: y + 108 }
+    // the equipment row: foosball, tree, and gym equipment all on the exact same line
+    const foos = add('foosball', { x: x + 8, y: y + 104 })
     let run = null
     let gym = null
-    if (clear >= x + 80) run = add('treadmill', { x: clear - 38, y: y + 112 })
-    if (clear >= x + 102) gym = add('dumbbells', { x: clear - 18, y: y + 114 })
-    // in season, the tree stands between Palú's corner and the gym
-    const treeL = x + 64
-    const treeR = run ? run.x - 4 : clear
-    if (treeR - treeL >= 14) add('tree', { x: Math.round((treeL + treeR) / 2) - 6, y: y + 97 })
+    if (clear >= x + 80) run = add('treadmill', { x: clear - 38, y: y + 108 })
+    if (clear >= x + 102) gym = add('dumbbells', { x: clear - 18, y: y + 110 })
+    // in season, the tree stands on the same line between foosball and the gym
+    const treeL = x + 38
+    const treeR = run ? run.x - 6 : clear
+    if (treeR - treeL >= 14) add('tree', { x: Math.round((treeL + treeR) / 2) - 6, y: y + 101 })
+    // Palú rests below the equipment row
+    c.bed = { x: Math.round((x + clear) / 2) - 10, y: y + 127 }
+    c.bowls = { x: Math.round((x + clear) / 2) - 28, y: y + 129 }
     c.doorY = y + 94
     finish(c, { booths, counter, sofa, foos, chairs, treadmill: run, dumbbells: gym })
   }
