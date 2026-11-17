@@ -61,24 +61,22 @@
       /* Takes whatever the header leaves; the office is laid out to fill it, and only an office
          too crowded to fit at the smallest scale scrolls. */
       #office {
-        flex: 1;
+        flex: 1 1 auto;
         min-height: 0;
         width: 100%;
         overflow: auto;
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        transition: padding-bottom 0.15s ease;
       }
-      body.has-detail #office {
-        padding-bottom: 160px;
+      /* The whole office's size, for scrolling; the canvas over it is only as big as the panel and
+         stays put while the floor scrolls under it. */
+      #floor {
+        margin: 0 auto;
       }
       #plan {
+        position: sticky;
+        top: 0;
         display: block;
-        margin: 0 auto;
         image-rendering: pixelated;
         cursor: pointer;
-        flex-shrink: 0;
       }
       /* Floats over the floor, 100% width across bottom */
       #detail {
@@ -164,7 +162,7 @@
     </header>
     <div class="empty" id="message" hidden></div>
     <main id="office">
-      <canvas id="plan"></canvas>
+      <div id="floor"><canvas id="plan"></canvas></div>
     </main>
     <section id="detail" hidden></section>
     <script type="module" src="./panel.js"></script>

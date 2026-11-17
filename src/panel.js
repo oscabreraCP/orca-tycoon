@@ -48,6 +48,7 @@ import {
   whiteboard,
   workstation
 } from './sprites.js'
+import { breakWalk, onTheMove, routePlanner, stepToward, visitorWalk, walkGrid } from './walking.js'
 
 const POLL_MS = 6000
 const FRAME_MS = 125
@@ -107,6 +108,7 @@ const STATE_NOTE = {
 }
 
 const office = document.getElementById('office')
+const floor = document.getElementById('floor')
 const canvas = document.getElementById('plan')
 const ctx = canvas.getContext('2d')
 const dpr = () => window.devicePixelRatio || 1
@@ -489,32 +491,62 @@ function fitLayout() {
   return computeLayout(cssW, minScale, GAP)
 }
 
+/**
+ * Device rows for a canvas as tall as the panel. Its CSS height has to be a whole number of CSS
+ * pixels: otherwise, at some pixel ratios (1.1, 1.25, 1.75), the browser shows it a hair short and
+ * one row of the picture is lost. So the first such number of rows at or above the panel's height;
+ * the few over sit below the panel's edge.
+ */
+function canvasRows(cssH) {
+  const rows = Math.round(cssH * dpr())
+  for (let n = rows; n < rows + 64; n++) if (wholeCss(n) !== null) return n
+  return rows
+}
+
+/** `rows` device pixels as a whole number of CSS pixels, or null if they are not one. */
+function wholeCss(rows) {
+  const css = rows / dpr()
+  return Math.abs(css - Math.round(css)) < 1e-3 ? Math.round(css) : null
+}
+
 function resize() {
   layout = fitLayout()
   const w = Math.round(layout.artW * layout.scale * dpr())
   const h = Math.round(layout.artH * layout.scale * dpr())
-  // Only touch the backing size when it changes: assigning it clears the canvas. The CSS size
-  // comes from the device size, so it is exact at any pixel ratio.
-  if (canvas.width !== w || canvas.height !== h) {
+  // The floor takes the whole office's size, so the panel scrolls over it; the canvas is only as
+  // tall as the panel shows, below any scrollbar across it, in whole device pixels so the picture
+  // is never stretched. A big team's office is many times taller than the panel, and a canvas that
+  // size is slow for the browser to put on screen every frame.
+  floor.style.width = `${w / dpr()}px`
+  floor.style.height = `${h / dpr()}px`
+  const shown = Math.min(h, canvasRows(office.clientHeight))
+  const shownCss = wholeCss(shown) ?? shown / dpr()
+  // Only touch the backing size when it changes: assigning it clears the canvas.
+  if (canvas.width !== w || canvas.height !== shown) {
     canvas.width = w
-    canvas.height = h
+    canvas.height = shown
   }
   canvas.style.width = `${w / dpr()}px`
-  canvas.style.height = `${h / dpr()}px`
+  canvas.style.height = `${shownCss}px`
+  // the rows below the panel's edge must not hold the canvas off the top at the end of the scroll
+  canvas.style.marginBottom = `${-Math.max(0, shownCss - office.clientHeight)}px`
   draw()
 }
+
+/** How far the floor has scrolled under the canvas, in device pixels. */
+const scrolled = () => Math.round(office.scrollTop * dpr())
 
 // ---- drawing ---------------------------------------------------------------------------------
 
 function artTransform() {
   const k = layout.scale * dpr()
-  ctx.setTransform(k, 0, 0, k, 0, 0)
+  ctx.setTransform(k, 0, 0, k, 0, -scrolled())
   ctx.imageSmoothingEnabled = false
 }
 
 function cssTransform() {
   const d = dpr()
-  ctx.setTransform(d, 0, 0, d, 0, 0)
+  ctx.setTransform(d, 0, 0, d, 0, -scrolled())
 }
 
 function drawBuilding(p) {
@@ -639,10 +671,10 @@ function movers() {
   }
   for (const seat of layout.seats) {
     const w = walkers.get(seat.key)
-    if (w?.path.length) person(seat.key, w.x, w.y, (at) => walker(at, seat.staff, tick, true, w.left))
+    if (w?.path.length) person(seat.key, w.x, w.y, (at) => walker(at, seat.staff, tick, onTheMove(w), w.left))
   }
   for (const [key, v] of visitors) {
-    if (v.mode !== 'seated' && !(v.wait > 0)) person(key, v.x, v.y, (at) => walker(at, v.spec, tick, true, v.left, roleColor(v.spec.role)))
+    if (v.mode !== 'seated' && !(v.wait > 0)) person(key, v.x, v.y, (at) => walker(at, v.spec, tick, onTheMove(v), v.left, roleColor(v.spec.role)))
   }
   const dog = paluBox()
   if (dog) list.push({ id: 'palu', ...dog, draw: drawPalu })
@@ -678,9 +710,10 @@ function homeOf(seat) {
   return { x: seat.x + 6, y: seat.y + SEAT_H + LABEL_H - 4 }
 }
 
-/** From where someone is to `to`, around the desks and furniture in the way. */
-function walkPath(from, to) {
-  return floorRoute(from, to, 'people') ?? [{ x: to.x, y: to.y }]
+/** From where someone is to `to`, around the desks and furniture in the way; null while planning. */
+function walkPath(key, from, to) {
+  const route = floorRoute(key, from, to, 'people')
+  return route === undefined ? null : route ?? [{ x: to.x, y: to.y }]
 }
 
 function hashOf(text) {
@@ -784,50 +817,14 @@ function stepWalkers() {
   for (const key of walkers.keys()) if (!live.has(key)) walkers.delete(key)
 
   for (const seat of layout.seats) {
-    const spot = spotOf.get(seat.key)
-    let w = walkers.get(seat.key)
-    const activity = activityOf.get(seat.key) ?? null
-    if (w) w.activity = activity
-    if (spot && !w && !scenePrimed) {
-      // already on a break when the panel opened
-      w = { x: spot.x, y: spot.y, path: [], mode: 'away', spot, activity, left: spot.left }
-      walkers.set(seat.key, w)
-    } else if (spot && !w) {
-      const home = homeOf(seat)
-      w = { ...home, path: walkPath(home, spot), mode: 'out', spot, activity }
-      walkers.set(seat.key, w)
-    } else if (spot && w && w.mode !== 'back' && (w.spot.x !== spot.x || w.spot.y !== spot.y)) {
-      // a new spot in the band (the corner reshuffled, or coffee turned into a nap)
-      w.path = walkPath(w, spot)
-      w.mode = 'out'
-      w.spot = spot
-    } else if (spot && w && w.mode === 'back') {
-      w.path = walkPath(w, spot)
-      w.mode = 'out'
-      w.spot = spot
-    } else if (!spot && w && w.mode !== 'back') {
-      w.path = walkPath(w, homeOf(seat))
-      w.mode = 'back'
-    }
-    if (!w) continue
-    const next = w.path[0]
-    if (next) {
-      const dx = next.x - w.x
-      const dy = next.y - w.y
-      w.left = dx < 0 ? true : dx > 0 ? false : w.left
-      w.x += Math.max(-WALK_SPEED, Math.min(WALK_SPEED, dx))
-      w.y += Math.max(-WALK_SPEED, Math.min(WALK_SPEED, dy))
-      if (Math.abs(next.x - w.x) < 0.5 && Math.abs(next.y - w.y) < 0.5) {
-        w.x = next.x
-        w.y = next.y
-        w.path.shift()
-      }
-    } else if (w.mode === 'out') {
-      w.mode = 'away'
-      w.left = w.spot.left ?? false
-    } else if (w.mode === 'back') {
-      walkers.delete(seat.key)
-    }
+    const w = breakWalk(
+      walkers.get(seat.key),
+      { spot: spotOf.get(seat.key), activity: activityOf.get(seat.key) ?? null, home: homeOf(seat), primed: scenePrimed },
+      (from, to) => walkPath(`walk:${seat.key}`, from, to),
+      WALK_SPEED
+    )
+    if (w) walkers.set(seat.key, w)
+    else walkers.delete(seat.key)
   }
 }
 
@@ -843,17 +840,19 @@ function stoolStops(seat, stoolAt) {
 const doorStep = () => ({ x: DOOR_LANE_X, y: layout.building.doorY })
 
 /** To the stool, from wherever they are; from outside, through the front door first. */
-function routeIn(v, seat, stoolAt) {
+function routeIn(key, v, seat, stoolAt) {
   const { aisle, on } = stoolStops(seat, stoolAt)
   const from = v.x < DOOR_LANE_X ? doorStep() : v
-  return [...(from === v ? [] : [from]), ...walkPath(from, aisle), on]
+  const path = walkPath(`visit:${key}`, from, aisle)
+  return path && [...(from === v ? [] : [from]), ...path, on]
 }
 
 /** Off the stool into the aisle, across the floor to the front door, and out. */
-function routeOut(v) {
+function routeOut(key, v) {
   const door = doorStep()
   const from = v.mode === 'seated' ? v.aisle : v
-  return [...(from === v ? [] : [from]), ...walkPath(from, door), { x: -10, y: door.y }]
+  const path = walkPath(`visit:${key}`, from, door)
+  return path && [...(from === v ? [] : [from]), ...path, { x: -10, y: door.y }]
 }
 
 function stepVisitors() {
@@ -870,54 +869,33 @@ function stepVisitors() {
     if (!v) {
       // Already here when the panel opened: seated straight away. Later arrivals walk in.
       // Several arriving together come through the door one after another.
+      // A walk in starts once its route is planned; until then they are not here yet.
       const queued = [...visitors.values()].filter((o) => o.mode === 'in' && o.x < DOOR_LANE_X).length
       const outside = { x: -8, y: layout.building.doorY }
+      const path = scenePrimed ? routeIn(key, outside, seat, stoolAt) : []
+      if (!path) continue
       v = scenePrimed
-        ? { spec, ...outside, path: routeIn(outside, seat, stoolAt), mode: 'in', aisle: stops.aisle, stoolAt, wait: queued * 10 }
-        : { spec, ...stops.on, path: [], mode: 'seated', aisle: stops.aisle, stoolAt }
+        ? { spec, ...outside, path, mode: 'in', aisle: stops.aisle, stoolAt, wait: queued * 10 }
+        : { spec, ...stops.on, path, mode: 'seated', aisle: stops.aisle, stoolAt }
       visitors.set(key, v)
       continue
     }
     v.spec = spec
     v.aisle = stops.aisle
-    if (v.mode === 'out') {
-      // called back in before reaching the door
-      v.path = routeIn(v, seat, stoolAt)
-      v.mode = 'in'
-    } else if (v.stoolAt.x !== stoolAt.x || v.stoolAt.y !== stoolAt.y) {
-      // the desk moved (a stool was added or taken away): keep walking, to the new stool
-      if (v.mode === 'seated') Object.assign(v, stops.on)
-      else v.path = routeIn(v, seat, stoolAt)
-    }
-    v.stoolAt = stoolAt
   }
   for (const [key, v] of visitors) {
-    if (!wanted.has(key) && v.mode !== 'out') {
-      v.path = routeOut(v)
-      v.mode = 'out'
-      v.wait = 0
-    }
-    if (v.wait > 0) {
-      v.wait--
-      continue
-    }
-    const next = v.path[0]
-    if (next) {
-      const dx = next.x - v.x
-      const dy = next.y - v.y
-      v.left = dx < 0 ? true : dx > 0 ? false : v.left
-      v.x += Math.max(-WALK_SPEED, Math.min(WALK_SPEED, dx))
-      v.y += Math.max(-WALK_SPEED, Math.min(WALK_SPEED, dy))
-      if (Math.abs(next.x - v.x) < 0.5 && Math.abs(next.y - v.y) < 0.5) {
-        v.x = next.x
-        v.y = next.y
-        v.path.shift()
-      }
-    } else if (v.mode === 'in') v.mode = 'seated'
-    else if (v.mode === 'out') {
-      visitors.delete(key)
-      if (selected === key) selected = null
-    }
+    const want = wanted.get(key)
+    const stool = want ? { at: want.stoolAt, on: stoolStops(want.seat, want.stoolAt).on } : null
+    const here = visitorWalk(
+      v,
+      stool,
+      (from) => routeIn(key, from, want.seat, want.stoolAt),
+      (from) => routeOut(key, from),
+      WALK_SPEED
+    )
+    if (here) continue
+    visitors.delete(key)
+    if (selected === key) selected = null
   }
 }
 
@@ -954,8 +932,13 @@ function paluLanes() {
 // draws them behind), never through them.
 
 const GRID = 2
-const TURN_COST = 10 // what a turn costs, in steps: long straight runs read as walking with purpose
-const BLOCKED_COST = 1000
+// Search steps a frame for every route together (see walking.js): an ordinary floor finds a route
+// in a few thousand, a hall of hundreds of desks can take a few hundred thousand. ROUTE_MS is what
+// the search aims to stay within each frame, however dear a step gets on a big floor; it looks at
+// the clock between slices of steps, so a frame can run a slice over.
+const ROUTE_STEPS = 100000
+const ROUTE_MS = 16
+const planner = routePlanner(ROUTE_STEPS, { ms: ROUTE_MS })
 
 /** Where the feet are at (x, y): Palú side-on or up and down (narrower), and a person. */
 const FEET = {
@@ -1032,120 +1015,73 @@ function paluSniffSpots() {
   return spots.filter((s) => floorClear(FEET.palu.side(s.x, s.y), blocks))
 }
 
-const grids = new WeakMap() // layout -> where Palú's and people's feet may go, side-on and upright
+const grids = new Map() // floor geometry -> where Palú's and people's feet may go, side-on and upright
+let gridNow = { layout: null, tick: -1 } // this frame's grids, so asking again costs nothing
 
+/** The grid for the floor as it is; a poll that moved nothing finds the one it already built. */
 function floorGrid(who) {
-  let mine = grids.get(layout)
-  if (!mine) grids.set(layout, (mine = {}))
-  if (mine[who]) return mine[who]
-  const G = GRID
-  const W = Math.ceil(layout.artW / G)
-  const H = Math.ceil(layout.building.h / G)
+  if (gridNow.layout !== layout || gridNow.tick !== tick) gridNow = { layout, tick }
+  if (gridNow[who]) return gridNow[who]
   const blocks = floorObstacles(who)
-  const feet = FEET[who]
-  const side = new Uint8Array(W * H)
-  const upright = new Uint8Array(W * H)
-  for (let gy = 0; gy < H; gy++) {
-    for (let gx = 0; gx < W; gx++) {
-      side[gy * W + gx] = floorClear(feet.side(gx * G, gy * G), blocks) ? 1 : 0
-      upright[gy * W + gx] = floorClear(feet.upright(gx * G, gy * G), blocks) ? 1 : 0
-    }
+  const key = `${who}|${layout.artW}|${layout.building.h}|${JSON.stringify(blocks)}`
+  let grid = grids.get(key)
+  if (!grid) {
+    if (grids.size > 8) grids.clear()
+    const feet = { side: FEET[who].side(0, 0), upright: FEET[who].upright(0, 0) }
+    grid = walkGrid({ w: layout.artW, h: layout.building.h, wall: OUTER, size: GRID, feet, blocks })
+    grids.set(key, grid)
   }
-  return (mine[who] = { W, H, side, upright })
+  gridNow[who] = grid
+  return grid
 }
 
-/** Waypoints from `from` to `to`, around everything in the way. */
-function floorRoute(from, to, who) {
+/**
+ * Waypoints from `from` to `to`, around everything in the way, for whoever `key` is: undefined
+ * while the route is still being planned, null when there is no way there.
+ */
+function floorRoute(key, from, to, who) {
+  const grid = floorGrid(who)
+  const { W, H, side, upright } = grid
   const G = GRID
-  const { W, H, side, upright } = floorGrid(who)
   const snap = (v, n) => Math.max(0, Math.min(n - 1, Math.round(v / G)))
-  const start = snap(from.y, H) * W + snap(from.x, W)
-  const goal = snap(to.y, H) * W + snap(to.x, W)
-  // Dijkstra over (cell, heading); headings 0,1 move along x, 2,3 along y
-  const STEP = [1, -1, W, -W]
-  const cost = new Float64Array(W * H * 4).fill(Infinity)
-  const prev = new Int32Array(W * H * 4).fill(-1)
-  const heap = []
-  const push = (d, node) => {
-    heap.push([d, node])
-    for (let i = heap.length - 1; i > 0; ) {
-      const j = (i - 1) >> 1
-      if (heap[j][0] <= heap[i][0]) break
-      ;[heap[i], heap[j]] = [heap[j], heap[i]]
-      i = j
+  const found = planner.route(key, grid, snap(from.y, H) * W + snap(from.x, W), snap(to.y, H) * W + snap(to.x, W))
+  if (!found) return undefined
+  const { cells } = found
+  if (!cells) return null
+  // Pull the route straight: from each corner, head for the farthest cell further on that can be
+  // reached in a straight line over open floor. People cut across the room and go round things,
+  // instead of walking the grid's right angles.
+  const open = (cell) => side[cell] && upright[cell]
+  const inSight = (a, b) => {
+    const ax = a % W
+    const ay = Math.floor(a / W)
+    const dx = (b % W) - ax
+    const dy = Math.floor(b / W) - ay
+    const steps = Math.max(Math.abs(dx), Math.abs(dy)) * 2
+    for (let i = 1; i < steps; i++) {
+      const cx = Math.round(ax + (dx * i) / steps)
+      const cy = Math.round(ay + (dy * i) / steps)
+      if (!open(cy * W + cx)) return false
     }
+    return true
   }
-  const pop = () => {
-    const top = heap[0]
-    const last = heap.pop()
-    if (heap.length) {
-      heap[0] = last
-      for (let i = 0; ; ) {
-        const a = 2 * i + 1
-        const b = a + 1
-        let m = i
-        if (a < heap.length && heap[a][0] < heap[m][0]) m = a
-        if (b < heap.length && heap[b][0] < heap[m][0]) m = b
-        if (m === i) break
-        ;[heap[i], heap[m]] = [heap[m], heap[i]]
-        i = m
-      }
-    }
-    return top
+  const kept = [cells[0]]
+  for (let i = 0; i < cells.length - 1; ) {
+    // looking at most 64 cells ahead keeps a long route along furniture cheap
+    let j = Math.min(cells.length - 1, i + 64)
+    while (j > i + 1 && !inSight(cells[i], cells[j])) j--
+    kept.push(cells[j])
+    i = j
   }
-  for (let h = 0; h < 4; h++) {
-    cost[start * 4 + h] = 0
-    push(0, start * 4 + h)
-  }
-  let end = -1
-  while (heap.length) {
-    const [d, node] = pop()
-    if (d > cost[node]) continue
-    const cell = node >> 2
-    if (cell === goal) {
-      end = node
-      break
-    }
-    const heading = node & 3
-    const cx = cell % W
-    for (let h = 0; h < 4; h++) {
-      const next = cell + STEP[h]
-      if (h < 2 ? Math.floor(next / W) !== Math.floor(cell / W) : next < 0 || next >= W * H) continue
-      if (h === 0 && cx === W - 1) continue
-      // a blocked step is not a wall, only very dear: he can always get out of a snug spot (his
-      // nap by a desk, a seat on the sofa), but never cuts through furniture while there is a way round
-      const free = h < 2 ? side : upright
-      const nd = d + (free[next] ? 1 : BLOCKED_COST) + (h === heading ? 0 : TURN_COST)
-      const key = next * 4 + h
-      if (nd < cost[key]) {
-        cost[key] = nd
-        prev[key] = node
-        push(nd, key)
-      }
-    }
-  }
-  if (end < 0) return null
-  // walk back, keeping only the corners
-  const cells = []
-  for (let node = end; node >= 0; node = prev[node]) cells.push(node >> 2)
-  cells.reverse()
-  const points = cells.map((cell) => ({ x: (cell % W) * G, y: Math.floor(cell / W) * G }))
-  // from the nearest cell, so the first leg runs along a row that is clear
-  const corners = [points[0]]
-  for (let i = 1; i < points.length; i++) {
-    const a = points[i - 1]
-    const b = points[i]
-    const n = points[i + 1]
-    if (!n || (a.x === b.x) !== (b.x === n.x)) corners.push(b)
-  }
+  const corners = kept.map((cell) => ({ x: (cell % W) * G, y: Math.floor(cell / W) * G }))
   corners.push({ x: to.x, y: to.y })
   return corners
 }
 
 /** To `to`; desk visits come along the aisle and shuffle the last pixels into the spot. */
 function paluPath(to, viaAisle = false) {
-  if (!viaAisle) return floorRoute(palu, to, 'palu')
-  const path = floorRoute(palu, { x: to.x, y: to.y - PALU_AISLE }, 'palu')
+  if (!viaAisle) return floorRoute('palu', palu, to, 'palu')
+  const path = floorRoute('palu', palu, { x: to.x, y: to.y - PALU_AISLE }, 'palu')
   return path && [...path, { x: to.x, y: to.y }]
 }
 
@@ -1161,6 +1097,12 @@ function paluBowlSpots() {
   return clear.length ? clear : spots.slice(0, 1)
 }
 
+function paluWanderSpot() {
+  const x = Math.round(between(OUTER + 4, layout.artW - OUTER - 22))
+  const y = paluLanes()[Math.random() < 0.5 ? 0 : 1]
+  return { x, y }
+}
+
 function paluNext() {
   const atDesk = layout.seats.filter((s) => !walkers.has(s.key))
   const sniffs = paluSniffSpots()
@@ -1169,46 +1111,53 @@ function paluNext() {
   if (atDesk.length) options.push({ act: 'visit', w: 2 })
   let r = Math.random() * options.reduce((n, o) => n + o.w, 0)
   const act = options.find((o) => (r -= o.w) < 0)?.act ?? 'wander'
-  palu.act = act
-  palu.seatKey = null
-  palu.restLeft = Math.random() < 0.5
-  let path = null
+  // what he does next takes over once the way there is planned; until then he stays as he is
+  const plan = { act, seatKey: null, restLeft: Math.random() < 0.5, viaAisle: false, tries: 0 }
   if (act === 'bed') {
-    path = paluPath(paluBedSpot())
-    palu.restFor = between(40000, 90000)
+    plan.to = paluBedSpot()
+    plan.restFor = between(40000, 90000)
   } else if (act === 'sniff') {
     const spot = sniffs[Math.floor(Math.random() * sniffs.length)]
-    path = paluPath(spot)
-    palu.restLeft = spot.left
-    palu.restFor = between(2500, 6000)
+    plan.to = spot
+    plan.restLeft = spot.left
+    plan.restFor = between(2500, 6000)
   } else if (act === 'eat') {
     const bowls = paluBowlSpots()
     const spot = bowls[Math.floor(Math.random() * bowls.length)]
-    path = paluPath(spot)
-    palu.restLeft = spot.left
-    palu.restFor = between(3000, 7000)
+    plan.to = spot
+    plan.restLeft = spot.left
+    plan.restFor = between(3000, 7000)
   } else if (act === 'visit') {
     // more often beside someone dozing
     const weights = atDesk.map((s) => (LOUNGE_STATES.has(s.staff.state) ? 3 : 1))
     let q = Math.random() * weights.reduce((n, w) => n + w, 0)
     const seat = atDesk.find((_, i) => (q -= weights[i]) < 0) ?? atDesk[0]
-    palu.seatKey = seat.key
-    path = paluPath(paluDeskSpot(seat), true)
-    palu.restFor = between(60000, 120000)
+    plan.seatKey = seat.key
+    plan.to = paluDeskSpot(seat)
+    plan.viaAisle = true
+    plan.restFor = between(60000, 120000)
   } else {
-    for (let tries = 0; tries < 6 && !path; tries++) {
-      const x = Math.round(between(OUTER + 4, layout.artW - OUTER - 22))
-      const y = paluLanes()[Math.random() < 0.5 ? 0 : 1]
-      path = paluPath({ x, y })
-    }
-    palu.restFor = between(3000, 8000)
+    plan.to = paluWanderSpot()
+    plan.restFor = between(3000, 8000)
   }
+  palu.plan = plan
+  paluSetOff()
+}
+
+/** Off on his next walk once its route is planned; a wander tries six places before giving up. */
+function paluSetOff() {
+  const plan = palu.plan
+  let path
+  for (;;) {
+    path = paluPath(plan.to, plan.viaAisle)
+    if (path === undefined) return
+    if (path || plan.act !== 'wander' || ++plan.tries >= 6) break
+    plan.to = paluWanderSpot()
+  }
+  palu.plan = null
   // nowhere he can get to: a short sit where he is, then he thinks again
-  if (!path) {
-    palu.act = 'wander'
-    palu.seatKey = null
-    palu.restFor = between(3000, 8000)
-  }
+  if (path) Object.assign(palu, { act: plan.act, seatKey: plan.seatKey, restLeft: plan.restLeft, restFor: plan.restFor })
+  else Object.assign(palu, { act: 'wander', seatKey: null, restLeft: plan.restLeft, restFor: between(3000, 8000) })
   palu.path = path ?? []
   palu.until = null
 }
@@ -1219,26 +1168,22 @@ function stepPalu() {
   if (!palu) {
     // the panel opens with him asleep in his bed
     const spot = paluBedSpot()
-    palu = { ...spot, path: [], act: 'bed', until: now + between(20000, 60000), restLeft: false }
+    palu = { ...spot, path: [], act: 'bed', until: now + between(20000, 60000), restLeft: false, plan: null }
   }
   const next = palu.path[0]
   if (next) {
     const dx = next.x - palu.x
     const dy = next.y - palu.y
-    if (Math.abs(dx) >= 0.5) {
+    // side-on when he goes more across than up or down; the little step between the aisle and
+    // his spot is a shuffle, not a turn
+    if (Math.abs(dx) >= 0.5 && Math.abs(dx) >= Math.abs(dy)) {
       palu.left = dx < 0
       palu.dir = 'side'
     } else if (Math.abs(dy) > PALU_AISLE) palu.dir = dy > 0 ? 'down' : 'up'
-    // the little step between the aisle and his spot is a shuffle, not a turn
-    palu.x += Math.max(-PALU_SPEED, Math.min(PALU_SPEED, dx))
-    palu.y += Math.max(-PALU_SPEED, Math.min(PALU_SPEED, dy))
-    if (Math.abs(next.x - palu.x) < 0.5 && Math.abs(next.y - palu.y) < 0.5) {
-      palu.x = next.x
-      palu.y = next.y
-      palu.path.shift()
-    }
+    if (stepToward(palu, next, PALU_SPEED)) palu.path.shift()
     return
   }
+  if (palu.plan) return paluSetOff()
   if (palu.until === null) palu.until = now + palu.restFor
   // stay put on his spot even if the floor shifted under him
   const seat = palu.seatKey ? layout.seats.find((s) => s.key === palu.seatKey) : null
@@ -1693,7 +1638,7 @@ function apply(next) {
 // ---- input and loops -------------------------------------------------------------------------
 
 function artPoint(event) {
-  const rect = canvas.getBoundingClientRect()
+  const rect = floor.getBoundingClientRect()
   return [(event.clientX - rect.left) / layout.scale, (event.clientY - rect.top) / layout.scale]
 }
 
@@ -1895,6 +1840,7 @@ document.addEventListener('visibilitychange', () => {
 setInterval(() => {
   if (document.visibilityState === 'hidden') return
   tick++
+  planner.frame()
   stepWalkers()
   stepVisitors()
   stepPalu()
