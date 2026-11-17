@@ -281,15 +281,15 @@ function planRoom(floor, innerW) {
   const tableW = (table) => table.reduce((n, seat) => n + segmentW(seat), 0)
   const lines = []
   let line = []
-  let width = 0
+  let lineWidth = 0
   for (const table of tables) {
     const w = tableW(table)
-    if (line.length && width + TABLE_GAP + w > innerW) {
+    if (line.length && lineWidth + TABLE_GAP + w > innerW) {
       lines.push(line)
       line = []
-      width = 0
+      lineWidth = 0
     }
-    width += (line.length ? TABLE_GAP : 0) + w
+    lineWidth += (line.length ? TABLE_GAP : 0) + w
     line.push(table)
   }
   if (line.length) lines.push(line)
