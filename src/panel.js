@@ -51,7 +51,7 @@ import {
   whiteboard,
   workstation
 } from './sprites.js'
-import { LOFT_MIN_W, loftGeometry, drawLoft, layoutLoft, lounging, outlinedAt, sitting, standing } from './loft.js'
+import { LOFT_MIN_W, loftGeometry, drawLoft, layoutLoft, lounging, outlinedAt, sitting, standing, hangout, footprint, drawHangout } from './loft.js'
 import { breakWalk, onTheMove, routePlanner, stepToward, visitorWalk, walkGrid } from './walking.js'
 
 const POLL_MS = 3000
@@ -356,108 +356,10 @@ function computeLayout(cssW, scale, corridor = GAP) {
   // All team rooms go first (at the top).
   const placed = pack(plans, OUTER + MARGIN)
 
-  // The commons band (gym, lounge, foosball, coffee, booths) sits at the bottom below all rooms.
-  // Wide floors (>=310) fit everything side-by-side in a single 1-row band to eliminate dead space;
-  // narrower floors stack them across 2 or 3 rows.
-  const wide = floorW >= 150
-  const singleRow = floorW >= 310
+  // The commons ("gym" / hangout area: booths, counter, fridge, cooler, pink rug, sofa, round table, foosball, bar table, tree, dog bed)
+  // sits at the bottom below all rooms, matching Loft's hangout layout.
   const bandY = plans.length ? placed.bottom : OUTER + MARGIN
-  const rows = singleRow ? 1 : wide ? 2 : 3
-  const bandH = COMMON_H * rows
-  const gamesY = bandY + COMMON_H * (rows - 1)
-  const entry = 10 // a clear strip by the door
-  const common = { x: OUTER + MARGIN, y: bandY, w: floorW, h: bandH }
-  common.laneTop = bandY - 4
-  common.laneBottom = bandY + bandH - 8
-  const doorY = bandY + 8
-
-  if (singleRow) {
-    const loungeW = Math.min(68, Math.max(50, Math.floor((floorW - entry) * 0.22)))
-    const cornerX = common.x + entry + loungeW + 6
-    const kitchenW = 48
-    const kitchenX = cornerX + 22
-    const kitchenEnd = kitchenX + kitchenW
-    common.lounge = { x: common.x + entry, y: bandY + 4, w: loungeW }
-    common.cooler = { x: cornerX + 2, y: bandY + 2 }
-    common.coffee = { x: cornerX + 11, y: bandY + 4 }
-    common.kitchen = { x: kitchenX, y: bandY + 6, w: kitchenW }
-    common.spots = []
-    for (let sx = cornerX; sx + 8 <= kitchenEnd; sx += 9) {
-      common.spots.push({ x: sx, y: bandY + 17, kind: 'coffee' })
-    }
-
-    const fx = kitchenEnd + 10
-    common.foosball = { x: fx, y: bandY + 10 }
-    common.foos = [
-      { x: fx + 5, y: bandY + 10 - 14, kind: 'foosball', left: false, back: false },
-      { x: fx + 15, y: bandY + 10 + 12, kind: 'foosball', left: false, back: true }
-    ]
-
-    // Gym equipment in recreation area
-    common.treadmill = { x: fx + 32, y: bandY + 8 }
-    common.dumbbells = { x: fx + 52, y: bandY + 9 }
-
-    common.bowls = { x: fx + 70, y: bandY + 18 }
-    common.bed = { x: common.bowls.x + 16, y: bandY + 14 }
-
-    common.booths = []
-    const boothCount = 3
-    for (let i = 0; i < boothCount; i++) {
-      const bx = common.x + floorW - (i + 1) * 16
-      common.booths.push({ x: bx + 2, y: bandY + 9, kind: 'booth', left: true, bx, by: bandY + 5 })
-    }
-
-    common.sofa = []
-    const sofaSeats = Math.min(6, Math.floor((loungeW - 12) / 9))
-    for (let i = 0; i < sofaSeats; i++) {
-      common.sofa.push({ x: common.lounge.x + 6 + i * 9, y: common.lounge.y + 1, kind: 'lounge' })
-    }
-  } else {
-    const loungeW = Math.min(72, wide ? Math.floor((floorW - GAP) / 2) - entry : floorW - entry)
-    const cornerX = wide ? common.x + entry + loungeW + GAP : common.x + entry
-    const cornerY = wide ? bandY : bandY + COMMON_H
-    common.lounge = { x: common.x + entry, y: bandY + 4, w: loungeW }
-    common.cooler = { x: cornerX + 2, y: cornerY + 2 }
-    common.coffee = { x: cornerX + 12, y: cornerY + 4 }
-    common.kitchen = { x: cornerX + 24, y: cornerY + 6, w: Math.min(48, Math.max(30, common.x + floorW - cornerX - 24)) }
-    common.spots = []
-    const kitchenEnd = cornerX + 24 + common.kitchen.w
-    for (let sx = cornerX; sx + 8 <= Math.min(common.x + floorW, kitchenEnd + 8); sx += 9) common.spots.push({ x: sx, y: cornerY + 17, kind: 'coffee' })
-
-    const fx = common.x + entry + 8
-    common.foosball = { x: fx, y: gamesY + 7 }
-    common.foos = [
-      { x: fx + 5, y: gamesY + 7 - 15, kind: 'foosball', left: false, back: false },
-      { x: fx + 15, y: gamesY + 7 + 12, kind: 'foosball', left: false, back: true }
-    ]
-    // Gym equipment in recreation area
-    common.treadmill = { x: fx + 32, y: gamesY + 5 }
-    common.dumbbells = { x: fx + 51, y: gamesY + 6 }
-
-    common.booths = []
-    const boothCount = wide ? 3 : 2
-    for (let i = 0; i < boothCount; i++) {
-      const bx = common.x + floorW - (i + 1) * 16
-      common.booths.push({ x: bx + 2, y: gamesY + 9, kind: 'booth', left: true, bx, by: gamesY + 5 })
-    }
-    common.sofa = []
-    const sofaSeats = Math.min(6, Math.floor((loungeW - 12) / 9))
-    for (let i = 0; i < sofaSeats; i++) common.sofa.push({ x: common.lounge.x + 6 + i * 9, y: common.lounge.y + 1, kind: 'lounge' })
-
-    const gapStart = fx + 68
-    const gapEnd = common.x + floorW - boothCount * 16
-    const gap = gapEnd - gapStart
-    if (gap >= 40) {
-      common.bowls = { x: gapStart + 4, y: gamesY + 18 }
-      common.bed = { x: common.bowls.x + 16, y: gamesY + 14 }
-    } else {
-      common.bed =
-        gap >= 26
-          ? { x: gapStart + Math.floor((gap - 20) / 2), y: gamesY + 14 }
-          : { x: common.lounge.x + common.lounge.w - 27, y: common.lounge.y + 16 }
-      common.bowls = { x: common.lounge.x + 3, y: common.lounge.y + 19 }
-    }
-  }
+  const common = hangout(OUTER + MARGIN, bandY, floorW)
 
   const rooms = []
   const seats = []
@@ -482,8 +384,8 @@ function computeLayout(cssW, scale, corridor = GAP) {
     })
     rooms.push(room)
   }
-  const y = bandY + bandH + MARGIN
-  const building = { w: artW, h: y + OUTER, doorY }
+  const y = common.y + common.h + MARGIN
+  const building = { w: artW, h: y + OUTER, doorY: common.doorY }
   return { artW, artH: building.h, scale, building, rooms, seats, common }
 }
 
@@ -668,92 +570,7 @@ function roomDecor(room) {
   return decor
 }
 
-/** Everything standing on the floor, each with the box it covers and the row its base is on. */
-function commonItems(c) {
-  const decor = layout.rooms.flatMap(roomDecor).map((d) =>
-    d.kind === 'plant'
-      ? { box: [d.x, d.y, 7, 9], base: d.y + 9, draw: () => plant(painter(ctx, d.x, d.y), tick) }
-      : { box: [d.x, d.y, 12, 9], base: d.y + 9, draw: () => bookshelf(painter(ctx, d.x, d.y)) }
-  )
-  if (!c) return decor.sort((a, b) => a.base - b.base)
-  const playing = [...walkers.values()].filter((w) => w.mode === 'away' && w.activity?.kind === 'foosball').length >= 2
-  const { lounge: l, kitchen: k, foosball: f, cooler, coffee, bowls } = c
-  const items = [
-    { box: [bowls.x, bowls.y, 13, 4], base: bowls.y + 4, draw: () => dogBowls(painter(ctx, bowls.x, bowls.y), tick) },
-    { box: [l.x, l.y, l.w, 26], base: l.y + 14, draw: () => lounge(painter(ctx, l.x, l.y), l.w) },
-    { box: [k.x, k.y - 6, k.w, 18], base: k.y + 12, draw: () => kitchen(painter(ctx, k.x, k.y), k.w) },
-    ...c.booths.map((b) => ({ box: [b.bx, b.by, 13, 24], base: b.by + 24, draw: () => booth(painter(ctx, b.bx, b.by)) })),
-    { box: [f.x - 2, f.y - 2, 32, 18], base: f.y + 14, draw: () => foosball(painter(ctx, f.x, f.y), tick, playing) },
-    ...(c.treadmill ? [{ box: [c.treadmill.x, c.treadmill.y, 16, 14], base: c.treadmill.y + 14, draw: () => treadmill(painter(ctx, c.treadmill.x, c.treadmill.y), tick, true) }] : []),
-    ...(c.dumbbells ? [{ box: [c.dumbbells.x, c.dumbbells.y, 14, 12], base: c.dumbbells.y + 12, draw: () => dumbbellRack(painter(ctx, c.dumbbells.x, c.dumbbells.y)) }] : []),
-    { box: [cooler.x, cooler.y, 7, 16], base: cooler.y + 16, draw: () => waterCooler(painter(ctx, cooler.x, cooler.y), tick) },
-    { box: [coffee.x, coffee.y, 9, 14], base: coffee.y + 14, draw: () => coffeeMachine(painter(ctx, coffee.x, coffee.y), tick) },
-    ...decor
-  ]
-  if (festive()) {
-    const tx = l.x - 11
-    const ty = l.y + 3
-    items.push({
-      box: [tx, ty, 15, 21],
-      base: ty + 20,
-      draw: () => christmasTree(painter(ctx, tx, ty), tick)
-    })
-    const lastBoothX = c.booths[c.booths.length - 1]?.bx ?? 0
-    if (lastBoothX - (c.bed.x + 24) >= 18) {
-      const tx2 = c.bed.x + 26
-      const ty2 = c.bed.y - 8
-      items.push({
-        box: [tx2, ty2, 15, 21],
-        base: ty2 + 20,
-        draw: () => christmasTree(painter(ctx, tx2, ty2), tick)
-      })
-    }
-  }
-  return items.sort((a, b) => a.base - b.base)
-}
-
 const overlaps = ([ax, ay, aw, ah], [bx, by, bw, bh]) => ax < bx + bw && bx < ax + aw && ay < by + bh && by < ay + ah
-
-/** Palú and everyone walking, each with the box they cover and the row their feet are on. */
-function movers() {
-  const list = []
-  const person = (id, x, y, draw) => {
-    const at = painter(ctx, Math.round(x), Math.round(y))
-    list.push({ id, box: [Math.round(x), Math.round(y) - 1, 8, 16], base: Math.round(y) + 15, draw: () => draw(at) })
-  }
-  for (const seat of layout.seats) {
-    const w = walkers.get(seat.key)
-    if (w?.path.length) person(seat.key, w.x, w.y, (at) => walker(at, seat.staff, tick, onTheMove(w), w.left))
-  }
-  for (const [key, v] of visitors) {
-    if (v.mode !== 'seated' && !(v.wait > 0)) person(key, v.x, v.y, (at) => walker(at, v.spec, tick, onTheMove(v), v.left, roleColor(v.spec.role)))
-  }
-  const dog = paluBox()
-  if (dog) list.push({ id: 'palu', ...dog, draw: drawPalu })
-  return list.sort((a, b) => a.base - b.base)
-}
-
-/** Draws the commons; returns who was drawn among the furniture, behind something. */
-function drawCommon() {
-  const c = layout.common
-  // his bed is on the floor, under everything
-  if (c) dogBed(painter(ctx, c.bed.x, c.bed.y))
-  const items = commonItems(c)
-  const before = new Map() // item -> who passes just behind it
-  for (const m of movers()) {
-    const inFront = items.find((i) => i.base > m.base && overlaps(i.box, m.box))
-    if (inFront) before.set(inFront, [...(before.get(inFront) ?? []), m])
-  }
-  const behind = new Set()
-  for (const item of items) {
-    for (const m of before.get(item) ?? []) {
-      m.draw()
-      behind.add(m.id)
-    }
-    item.draw()
-  }
-  return behind
-}
 
 // ---- walking to the coffee corner ------------------------------------------------------------
 
@@ -1022,20 +839,13 @@ function floorObstacles(who) {
     if (boardW > 8) boxes.push([x + w - boardW - 4, y + 3, boardW, 7])
   }
   if (!c) return boxes
-  const { lounge: l, kitchen: k, foosball: f, cooler, coffee } = c
-  const mid = l.x + Math.floor(l.w / 2)
-  boxes.push(
-    [l.x + 2, l.y + 3, l.w - 4, 11], // the sofa
-    [mid - 8, l.y + 17, 16, 4], // the coffee table
-    [k.x, k.y + 4, k.w, 8], // the counter and the fridge
-    [cooler.x, cooler.y + 10, 7, 6],
-    [coffee.x, coffee.y + 8, 9, 6],
-    [f.x, f.y, 28, 14],
-    ...(c.treadmill ? [[c.treadmill.x, c.treadmill.y + 6, 16, 8]] : []),
-    ...(c.dumbbells ? [[c.dumbbells.x, c.dumbbells.y + 4, 14, 8]] : []),
-    [c.bowls.x, c.bowls.y + 1, 13, 3],
-    ...c.booths.map((b) => [b.bx, b.by + 6, 13, 18])
-  )
+  if (c.things) {
+    for (const t of c.things) {
+      const box = footprint(t)
+      if (box) boxes.push(box)
+    }
+    boxes.push([c.bowls.x, c.bowls.y + 1, 13, 3])
+  }
   return boxes
 }
 
@@ -1063,20 +873,13 @@ function paluSniffSpots() {
     if (d.kind === 'plant') spots.push(fromRight(d.x + 7, d.y + 9))
     else spots.push(fromLeft(d.x, d.y + 9))
   }
-  if (c) {
-    const { lounge: l, kitchen: k, foosball: f, cooler, coffee } = c
-    spots.push(
-      fromLeft(l.x + 2, l.y + 14), // the sofa's arms
-      fromRight(l.x + l.w - 2, l.y + 14),
-      fromLeft(cooler.x, cooler.y + 16),
-      fromRight(coffee.x + 9, coffee.y + 14),
-      fromLeft(k.x, k.y + 12), // the end of the kitchen counter
-      fromLeft(f.x, f.y + 14), // the foosball table's legs
-      fromRight(f.x + 28, f.y + 14),
-      ...(c.treadmill ? [fromLeft(c.treadmill.x, c.treadmill.y + 14)] : []),
-      ...(c.dumbbells ? [fromRight(c.dumbbells.x + 14, c.dumbbells.y + 12)] : []),
-      ...c.booths.slice(-1).map((b) => fromLeft(b.bx, b.by + 24))
-    )
+  if (c?.things) {
+    for (const t of c.things) {
+      if (t.kind === 'plant') spots.push(fromRight(t.x + 9, t.y + 15))
+      else if (t.kind === 'sofa') spots.push(fromLeft(t.x - 3, t.y + 13), fromRight(t.x + t.w + 3, t.y + 13))
+      else if (t.kind === 'foosball') spots.push(fromLeft(t.x, t.y + 18), fromRight(t.x + 28, t.y + 18))
+      else if (t.kind === 'cooler' || t.kind === 'fridge') spots.push(fromLeft(t.x, t.floor))
+    }
   }
   const blocks = floorObstacles('palu')
   return spots.filter((s) => floorClear(FEET.palu.side(s.x, s.y), blocks))
@@ -1458,7 +1261,6 @@ function draw() {
   const p = painter(ctx)
   drawBuilding(p)
   for (const room of layout.rooms) drawRoom(p, room)
-  const behind = drawCommon()
 
   // desks: people first, then the desk over their laps, then monitors and hands
   for (const seat of layout.seats) drawSeat(seat)
@@ -1476,44 +1278,47 @@ function draw() {
     glyph(p, '+', last.x + 7, last.y - 10, C.white)
   }
 
-  // people up and about, Palú and specialists on their way, nearest the bottom drawn last, so
-  // whoever stands in front covers whoever is behind. Callers in a booth go first, under its glass.
-  const scene = []
-  for (const seat of layout.seats) {
-    const w = walkers.get(seat.key)
-    if (!w || behind.has(seat.key)) continue
-    const at = painter(ctx, Math.round(w.x), Math.round(w.y))
-    const kind = w.mode === 'away' ? w.activity?.kind : null
-    let paint
-    if (kind === 'lounge') paint = () => lounger(at, seat.staff, tick, w.activity.pose)
-    else if (kind === 'booth') paint = () => walker(at, seat.staff, tick, false, w.left, null, 'phone')
-    else if (kind === 'foosball') paint = () => walker(at, seat.staff, tick, false, w.left, null, w.spot.back ? 'playBack' : 'play')
-    else paint = () => walker(at, seat.staff, tick, onTheMove(w), w.left)
-    scene.push({ base: Math.round(w.y) + 15, inBooth: kind === 'booth', paint })
+  // Room decor (plants and bookshelves in the team rooms)
+  const decor = layout.rooms.flatMap(roomDecor).map((d) =>
+    d.kind === 'plant'
+      ? { base: d.y + 9, paint: () => plant(painter(ctx, d.x, d.y), tick) }
+      : { base: d.y + 9, paint: () => bookshelf(painter(ctx, d.x, d.y)) }
+  )
+
+  // Common hangout ("gym" / recreation area) matching Loft's exact hangout layout
+  const dog = paluBox()
+  const people = loftPeople()
+  const sittersAt = new Set(people.filter((m) => m.kind === 'table').map((m) => m.chair))
+  const world = {
+    tick,
+    people,
+    sittersAt,
+    bowls: (p, b) => dogBowls(painter(ctx, b.x, b.y), tick)
   }
-  for (const [key, v] of visitors) {
-    if (v.mode === 'seated' || v.wait > 0 || behind.has(key)) continue
-    const at = painter(ctx, Math.round(v.x), Math.round(v.y))
-    scene.push({ base: Math.round(v.y) + 15, paint: () => walker(at, v.spec, tick, onTheMove(v), v.left, roleColor(v.spec.role)) })
+  const hangoutItems = layout.common?.things ? drawHangout(p, layout.common, world, true) : []
+
+  const scene = [...decor, ...hangoutItems]
+  for (const m of people) {
+    if (m.kind !== 'booth') scene.push({ base: m.base, paint: () => m.paint(p) })
   }
-  const dog = behind.has('palu') ? null : paluBox()
-  // on a tie Palú goes first: he is low to the ground, so the person's legs cover him
   if (dog) scene.push({ base: dog.base - 0.5, paint: drawPalu })
   scene.sort((a, b) => a.base - b.base)
-  for (const it of scene) if (it.inBooth) it.paint()
-  if (layout.common) for (const b of layout.common.booths) boothGlass(painter(ctx, b.bx, b.by))
-  for (const it of scene) if (!it.inBooth) it.paint()
+  for (const it of scene) it.paint()
 
   const s = layout.scale
   for (const room of layout.rooms) {
     drawText(room.name, (room.x + 5) * s, (room.y + 6.5) * s, (Math.min(room.w - 40, 56) - 4) * s, C.white, { weight: 700 })
   }
   for (const seat of layout.seats) {
+    if (walkers.has(seat.key)) continue
     const isLead = Boolean(seat.staff.isLeader)
     const color = seat === seatOf(selected) ? '#2a1f6b' : (isLead ? '#805000' : '#2a2633')
     const label = (isLead ? '👑 ' : '') + seatLabel(seat)
     drawText(label, (seat.x + SEAT_W / 2) * s, (seat.y + SEAT_H + 2.5) * s, (DESK_W + 4) * s, color, { align: 'center', size: 10, weight: isLead ? 700 : 600 })
   }
+
+  drawSelection()
+}
 
   drawSelection()
 }

@@ -266,7 +266,7 @@ function drawerBlocks(room) {
 /** The hangout: phone booths, the coffee corner, the sofa on the pink rug, foosball, a bar. */
 const HANG_MAX = 330 // wider than this, the hangout keeps its size in the middle of the floor
 
-function hangout(fx, y, fw) {
+export function hangout(fx, y, fw) {
   const w = Math.min(fw, HANG_MAX)
   const x = fx + Math.floor((fw - w) / 2)
   const R = x + w
@@ -432,7 +432,7 @@ function curtainSegments(layout) {
 }
 
 /** The floor a piece of hangout furniture stands on. */
-function footprint(t) {
+export function footprint(t) {
   switch (t.kind) {
     case 'booth':
       return [t.x, t.floor - 8, 20, 8]
@@ -1286,6 +1286,54 @@ function background(layout) {
 }
 
 /**
+ * Draws the hangout (gym / common recreation area): booths, counter, fridge, cooler, pink rug,
+ * sofa, coffee table, round table with chairs, foosball, bar table with stools, tree, and dog bed.
+ * Returns thing items for depth-sorting with walking people and Palu.
+ */
+export function drawHangout(p, c, world, drawFloored = true) {
+  if (!c || !c.things) return []
+  const t = world.tick
+  if (drawFloored) {
+    for (const th of c.things) if (th.kind === 'rug') rug(p, th)
+    dogBed(p, c.bed)
+  }
+
+  const bigPlant = c.things.some((th) => th.kind === 'tree') ? null : c.things.find((th) => th.kind === 'plant')
+  const bigTree = (x, y) => ol(p, (q) => christmasTree(at(q, x, y), t))
+  const playing = world.people.filter((m) => m.kind === 'foosball').length >= 2
+  const callers = new Map(world.people.filter((m) => m.kind === 'booth').map((m) => [m.spot?.bx ?? m.spot?.x, m]))
+
+  const scene = []
+  for (const thing of c.things) {
+    const base = thingBase(thing)
+    const paint = {
+      booth: () => {
+        boothBack(p, thing)
+        callers.get(thing.x)?.paint(p)
+        boothGlass(p, thing)
+      },
+      counter: () => counter(p, thing, t),
+      fridge: () => fridge(p, thing),
+      cooler: () => cooler(p, thing, t),
+      sofa: () => sofa(p, thing),
+      coffeeTable: () => coffeeTable(p, thing),
+      tulip: () => {
+        if (!world.sittersAt?.has(thing)) tulip(p, thing)
+      },
+      roundTable: () => roundTable(p, thing),
+      foosball: () => foosball(p, thing, t, playing),
+      barTable: () => barTable(p, thing),
+      barStool: () => barStool(p, thing),
+      plant: () => (festive() && thing === bigPlant ? bigTree(thing.x - 3, thing.y - 6) : plant(p, thing, t)),
+      tree: () => festive() && bigTree(thing.x, thing.y)
+    }[thing.kind]
+    if (paint) scene.push({ base, paint })
+  }
+  scene.push({ base: c.bowls.y + 4, paint: () => world.bowls(p, c.bowls) })
+  return scene
+}
+
+/**
  * Draws the office. `world` is the panel's live state: `tick`; `away(seat)`, whether the agent is
  * up and about; `seatedAt(seat)`, the specialists on its stools; `people`, everyone standing or
  * walking, each with `{ key, x, y, base, kind, paint(p) }`; `palu`, his box and a painter; and
@@ -1317,37 +1365,7 @@ export function drawLoft(ctx, layout, world) {
       }
     })
   })
-  // in season the hangout's big tree, or its first plant when there is no room for one
-  const bigPlant = c.things.some((th) => th.kind === 'tree') ? null : c.things.find((th) => th.kind === 'plant')
-  const bigTree = (x, y) => ol(p, (q) => christmasTree(at(q, x, y), t))
-  const playing = world.people.filter((m) => m.kind === 'foosball').length >= 2
-  const callers = new Map(world.people.filter((m) => m.kind === 'booth').map((m) => [m.spot.bx, m]))
-  for (const thing of c.things) {
-    const base = thingBase(thing)
-    const paint = {
-      booth: () => {
-        boothBack(p, thing)
-        callers.get(thing.x)?.paint(p)
-        boothGlass(p, thing)
-      },
-      counter: () => counter(p, thing, t),
-      fridge: () => fridge(p, thing),
-      cooler: () => cooler(p, thing, t),
-      sofa: () => sofa(p, thing),
-      coffeeTable: () => coffeeTable(p, thing),
-      tulip: () => {
-        if (!world.sittersAt?.has(thing)) tulip(p, thing)
-      },
-      roundTable: () => roundTable(p, thing),
-      foosball: () => foosball(p, thing, t, playing),
-      barTable: () => barTable(p, thing),
-      barStool: () => barStool(p, thing),
-      plant: () => (festive() && thing === bigPlant ? bigTree(thing.x - 3, thing.y - 6) : plant(p, thing, t)),
-      tree: () => festive() && bigTree(thing.x, thing.y)
-    }[thing.kind]
-    if (paint) scene.push({ base, paint })
-  }
-  scene.push({ base: c.bowls.y + 4, paint: () => world.bowls(p, c.bowls) })
+  if (c) scene.push(...drawHangout(p, c, world, false))
   for (const room of layout.rooms) for (const d of room.drawers ?? []) scene.push({ base: d.base, paint: () => drawers(p, d, t) })
   for (const m of world.people) if (m.kind !== 'booth') scene.push({ base: m.base, paint: () => m.paint(p) })
   if (world.palu) scene.push({ base: world.palu.base - 0.5, paint: () => world.palu.paint(p) })
