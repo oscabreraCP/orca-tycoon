@@ -97,7 +97,8 @@ const ACTIVITIES = [
   { id: 'foosball', kind: 'foosball', weight: 3 },
   { id: 'call', kind: 'booth', weight: 2 },
   // a chat at the round table: only the loft has one
-  { id: 'chat', kind: 'table', weight: 2 }
+  { id: 'chat', kind: 'table', weight: 2 },
+  { id: 'workout', kind: 'gym', weight: 2.5 }
 ]
 const ACTIVITY_MS = 60000
 // States in which an agent goes and naps on the lounge sofa, while there are seats.
@@ -613,12 +614,12 @@ function slotOf(key, now) {
 /** The spot for every agent on a break; full places pass on, nobody plays foosball alone. */
 function assignBreaks(common) {
   const now = Date.now()
-  const pools = { lounge: common.sofa, coffee: common.spots, foosball: common.foos, booth: common.booths, table: common.table ?? [] }
+  const pools = { lounge: common.sofa, coffee: common.spots, foosball: common.foos, booth: common.booths, table: common.table ?? [], gym: common.gym ?? [] }
   const onBreak = layout.seats.filter((s) => AWAY_STATES.has(s.staff.state) || LOUNGE_STATES.has(s.staff.state))
   const onKeys = new Set(onBreak.map((s) => s.key))
   for (const key of assigned.keys()) if (!onKeys.has(key)) assigned.delete(key)
 
-  const taken = { lounge: new Set(), coffee: new Set(), foosball: new Set(), booth: new Set(), table: new Set() }
+  const taken = { lounge: new Set(), coffee: new Set(), foosball: new Set(), booth: new Set(), table: new Set(), gym: new Set() }
   const pending = []
   for (const seat of onBreak) {
     const slot = slotOf(seat.key, now)
@@ -1206,8 +1207,10 @@ function loftPeople() {
       m.chair = chair
       m.base = chair.y + 11 + (chair.facing ? 0.5 : -0.5)
       m.paint = (p) => sitting(p, chair, seat.staff, tick, talking)
-    }
-    else m.paint = (p) => standing(p, x, y, seat.staff, tick, onTheMove(w), w.left)
+    } else if (kind === 'gym') {
+      if (w.spot?.act === 'treadmill') m.base = y + 15.5
+      m.paint = (p) => standing(p, x, y, seat.staff, tick, false, w.spot?.left ?? w.left, null, w.spot?.act === 'treadmill' ? 'run' : 'lift')
+    } else m.paint = (p) => standing(p, x, y, seat.staff, tick, onTheMove(w), w.left)
     people.push(m)
   }
   for (const [key, v] of visitors) {

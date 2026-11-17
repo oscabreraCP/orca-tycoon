@@ -8,7 +8,7 @@
 // The panel keeps the mechanics (breaks, specialists coming and going, Palú, clicks); this file
 // owns where things are and how they look.
 
-import { C, XMAS, christmasTree, crown, festive, festiveHeadgear, glyph, holidayLights, look, lounger, roleColor, walker } from './sprites.js'
+import { C, XMAS, christmasTree, crown, festive, festiveHeadgear, glyph, holidayLights, look, lounger, roleColor, walker, treadmill, dumbbellRack } from './sprites.js'
 
 const INK = '#1d1b26'
 export const OUTER = 4 // the side walls
@@ -296,10 +296,12 @@ export function hangout(fx, y, fw) {
     add('barStool', { x: R - 29, y: y + 62 })
     add('plant', { x: rug.x + 2, y: y + 2 })
     add('plant', { x: R - 22, y: y + 86 })
+    const run = add('treadmill', { x: R - 75, y: y + 78 })
+    const gym = add('dumbbells', { x: R - 52, y: y + 80 })
     c.bed = { x: x + 20, y: y + 86 }
     c.bowls = { x: x + 4, y: y + 91 }
     c.doorY = y + 56
-    finish(c, { booths, counter, sofa, foos, chairs })
+    finish(c, { booths, counter, sofa, foos, chairs, treadmill: run, dumbbells: gym })
   } else {
     // The right edge stays clear: it lines up with the gaps in the curtain lines, so people walk
     // straight down from their rooms. Booth, fridge and counter stand against the curtain, the
@@ -316,24 +318,30 @@ export function hangout(fx, y, fw) {
     const sofa = add('sofa', { x: rug.x + 6, y: rug.y + 4, w: sofaW })
     add('coffeeTable', { x: sofa.x + Math.floor(sofa.w / 2) - 12, y: rug.y + 24 })
     const chairs = tableGroup(add, rug.x + rug.w - 40, rug.y + 2)
-    // the last row: foosball, Palú's corner, and the high table with its stools when it fits
-    const foos = add('foosball', { x: x + 12, y: y + 112 })
-    c.bed = { x: x + 50, y: y + 118 }
-    c.bowls = { x: x + 52, y: y + 108 }
-    if (clear - (x + 80) >= 50) {
-      const bx = clear - 40
-      add('barStool', { x: bx - 10, y: y + 104 })
-      add('barStool', { x: bx + 33, y: y + 104 })
+    // the last row: foosball, Palú's corner, gym equipment, and the high table with its stools
+    const foos = add('foosball', { x: x + 8, y: y + 112 })
+    c.bed = { x: x + 40, y: y + 118 }
+    c.bowls = { x: x + 42, y: y + 108 }
+    let run = null
+    let gym = null
+    if (clear >= x + 85) run = add('treadmill', { x: x + 66, y: y + 114 })
+    if (clear >= x + 102) gym = add('dumbbells', { x: x + 84, y: y + 116 })
+    const gymRight = gym ? x + 98 : run ? x + 82 : x + 64
+    if (clear - gymRight >= 40) {
+      const bx = clear - 32
+      if (bx - 8 >= gymRight) add('barStool', { x: bx - 8, y: y + 104 })
+      add('barStool', { x: bx + 30, y: y + 104 })
       add('barTable', { x: bx + 2, y: y + 98 })
       add('barStool', { x: bx + 5, y: y + 112 })
-      add('barStool', { x: bx + 21, y: y + 112 })
+      add('barStool', { x: bx + 19, y: y + 112 })
     }
-    // in season, the tree stands between Palú's corner and the high table, or the right edge
-    const treeL = x + 76
-    const treeR = clear - (x + 80) >= 50 ? clear - 50 : clear
-    if (treeR - treeL >= 17) add('tree', { x: Math.round((treeL + treeR) / 2) - 7, y: y + 97 })
+    // in season, the tree stands between gym / Palú's corner and the high table, or the right edge
+    const barStool = c.things.find((t) => t.kind === 'barStool' || t.kind === 'barTable')
+    const treeL = gymRight + 2
+    const treeR = barStool ? barStool.x - 2 : clear
+    if (treeR - treeL >= 14) add('tree', { x: Math.round((treeL + treeR) / 2) - 6, y: y + 97 })
     c.doorY = y + 94
-    finish(c, { booths, counter, sofa, foos, chairs })
+    finish(c, { booths, counter, sofa, foos, chairs, treadmill: run, dumbbells: gym })
   }
   return c
 }
@@ -347,7 +355,7 @@ function tableGroup(add, tx, ty) {
 }
 
 /** The spots people take on a break, in the pools the panel hands out. */
-function finish(c, { booths, counter, sofa, foos, chairs }) {
+function finish(c, { booths, counter, sofa, foos, chairs, treadmill, dumbbells }) {
   // a seat at the table for a chat: stand by the chair, then sit down on it
   c.table = chairs.map((chair) => ({ x: chair.x, y: chair.y - 4, kind: 'table', chair, left: chair.x > chairs[0].x + 10 }))
   c.booths = booths.map((b) => ({ x: b.x + 6, y: b.floor - 19, kind: 'booth', left: true, bx: b.x, floor: b.floor }))
@@ -359,6 +367,9 @@ function finish(c, { booths, counter, sofa, foos, chairs }) {
     { x: foos.x + 10, y: foos.y - 16, kind: 'foosball', left: false, back: false },
     { x: foos.x + 10, y: foos.y + 20, kind: 'foosball', left: false, back: true }
   ]
+  c.gym = []
+  if (treadmill) c.gym.push({ x: treadmill.x + 4, y: treadmill.y - 1, kind: 'gym', act: 'treadmill', left: true })
+  if (dumbbells) c.gym.push({ x: dumbbells.x + 3, y: dumbbells.y + 12, kind: 'gym', act: 'weights', left: false })
   // Palú wanders along the hangout's last row
   c.laneTop = c.y + c.h - 30
   c.laneBottom = c.y + c.h - 22
@@ -418,6 +429,8 @@ export const loftGeometry = {
       else if (t.kind === 'foosball') spots.push(fromLeft(t.x, t.y + 18), fromRight(t.x + 28, t.y + 18))
       else if (t.kind === 'cooler' || t.kind === 'fridge') spots.push(fromLeft(t.x, t.floor))
       else if (t.kind === 'booth') spots.push(fromRight(t.x + 20, t.floor))
+      else if (t.kind === 'treadmill') spots.push(fromRight(t.x + 16, t.y + 12))
+      else if (t.kind === 'dumbbells') spots.push(fromLeft(t.x, t.y + 10))
     }
     return spots
   }
@@ -460,6 +473,10 @@ export function footprint(t) {
       return [t.x + 1, t.y + 10, 8, 5]
     case 'tree':
       return festive() ? [t.x + 2, t.y + 17, 11, 4] : null
+    case 'treadmill':
+      return [t.x, t.y + 2, 4, 10]
+    case 'dumbbells':
+      return [t.x, t.y + 2, 14, 10]
     default:
       return null
   }
@@ -1255,6 +1272,10 @@ function thingBase(t) {
       return t.y + 15
     case 'tree':
       return t.y + 21
+    case 'treadmill':
+      return t.y + 14
+    case 'dumbbells':
+      return t.y + 12
     default:
       return t.y
   }
@@ -1325,7 +1346,12 @@ export function drawHangout(p, c, world, drawFloored = true) {
       barTable: () => barTable(p, thing),
       barStool: () => barStool(p, thing),
       plant: () => (festive() && thing === bigPlant ? bigTree(thing.x - 3, thing.y - 6) : plant(p, thing, t)),
-      tree: () => festive() && bigTree(thing.x, thing.y)
+      tree: () => festive() && bigTree(thing.x, thing.y),
+      treadmill: () => {
+        const running = world.people?.some((m) => m.kind === 'gym' && m.spot?.act === 'treadmill')
+        treadmill(at(p, thing.x, thing.y), t, running)
+      },
+      dumbbells: () => dumbbellRack(at(p, thing.x, thing.y))
     }[thing.kind]
     if (paint) scene.push({ base, paint })
   }

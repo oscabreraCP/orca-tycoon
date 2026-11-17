@@ -593,6 +593,18 @@ export function walker(p, staff, t, moving, left, badge = null, pose = 'mug') {
     const y = pose === 'play' ? 10 : 6
     p(0, y + jiggle, 2, 1, skin)
     p(6, y + 1 - jiggle, 2, 1, skin)
+  } else if (!moving && pose === 'run') {
+    // running on the treadmill: jogging arms
+    const jog = (t >> 1) % 2
+    p(left ? -1 : 7, 7 + jog, 2, 2, skin)
+    p(left ? 7 : -1, 8 - jog, 2, 2, skin)
+  } else if (!moving && pose === 'lift') {
+    // lifting dumbbells: hands holding weights
+    const lift = (t >> 2) % 2
+    p(-2, 7 - lift * 3, 2, 2, '#73b3ff')
+    p(0, 8 - lift * 3, 1, 1, skin)
+    p(7, 8 - lift * 3, 1, 1, skin)
+    p(8, 7 - lift * 3, 2, 2, '#73b3ff')
   } else if (!moving) {
     // a mug in hand, steaming
     p(left ? -1 : 7, 8, 2, 2, C.white)
