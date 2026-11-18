@@ -746,3 +746,72 @@ test('a sleeping desk sharing a name never changes a busy desk nameplate', () =>
   // with no conversation to borrow from, the sleeping one keeps its own name
   assert.equal(asleep.label, 'feature')
 })
+
+test('enriches open worktrees with connected dormant agent terminals omitted from worktree ps', () => {
+  const raw = {
+    result: {
+      worktrees: [
+        {
+          worktreeId: 'w1',
+          repo: 'stratos',
+          displayName: 'main',
+          agents: [{ paneKey: 'tab1:leaf1', state: 'working', conversationName: 'active agent' }]
+        }
+      ]
+    }
+  }
+  const terminals = {
+    result: {
+      terminals: [
+        // already in w.agents -> should not duplicate
+        { worktreeId: 'w1', tabId: 'tab1', leafId: 'leaf1', connected: true, orphaned: false, agentIdentity: 'claude', title: 'active agent' },
+        // dormant agent in open worktree -> should be added
+        { worktreeId: 'w1', tabId: 'tab2', leafId: 'leaf2', connected: true, orphaned: false, agentIdentity: 'claude', title: 'dormant agent', preview: 'waiting at prompt' }
+      ]
+    }
+  }
+  const snap = toSnapshot(raw, 1, [], [], terminals)
+  const staff = snap.floors[0].desks[0].staff
+  assert.equal(staff.length, 2)
+  assert.equal(staff[0].name, 'active agent')
+  assert.equal(staff[0].state, 'working')
+  assert.equal(staff[1].name, 'dormant agent')
+  assert.equal(staff[1].state, 'idle')
+  assert.equal(staff[1].id, 'tab2:leaf2')
+})
+
+test('ignores terminals from archived worktrees, disconnected terminals, and non-agent shells', () => {
+  const raw = {
+    result: {
+      worktrees: [
+        { worktreeId: 'open1', repo: 'web', displayName: 'main', isArchived: false, agents: [] },
+        { worktreeId: 'archived1', repo: 'old', displayName: 'dead', isArchived: true, agents: [] }
+      ]
+    }
+  }
+  const terminals = {
+    result: {
+      terminals: [
+        // terminal on archived worktree -> must be ignored!
+        { worktreeId: 'archived1', tabId: 't1', leafId: 'l1', connected: true, orphaned: false, agentIdentity: 'claude', title: 'archived task' },
+        // terminal on unknown/deleted worktree -> must be ignored!
+        { worktreeId: 'non-existent', tabId: 't2', leafId: 'l2', connected: true, orphaned: false, agentIdentity: 'claude', title: 'ghost task' },
+        // disconnected terminal -> must be ignored!
+        { worktreeId: 'open1', tabId: 't3', leafId: 'l3', connected: false, orphaned: false, agentIdentity: 'claude', title: 'closed terminal' },
+        // orphaned terminal -> must be ignored!
+        { worktreeId: 'open1', tabId: 't4', leafId: 'l4', connected: true, orphaned: true, agentIdentity: 'claude', title: 'orphaned task' },
+        // plain shell terminal (no agentIdentity) -> must be ignored!
+        { worktreeId: 'open1', tabId: 't5', leafId: 'l5', connected: true, orphaned: false, agentIdentity: null, title: 'zsh' },
+        // valid connected agent terminal on open worktree -> admitted!
+        { worktreeId: 'open1', tabId: 't6', leafId: 'l6', connected: true, orphaned: false, agentIdentity: 'claude', title: 'valid idle agent' }
+      ]
+    }
+  }
+  const snap = toSnapshot(raw, 1, [], [], terminals)
+  // 'old' repo was archived and had no live agents -> must remain completely off the floor!
+  assert.deepEqual(snap.floors.map((f) => f.repo), ['web'])
+  const webStaff = snap.floors[0].desks[0].staff
+  assert.equal(webStaff.length, 1)
+  assert.equal(webStaff[0].name, 'valid idle agent')
+  assert.equal(webStaff[0].id, 't6:l6')
+})

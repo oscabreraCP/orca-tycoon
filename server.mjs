@@ -358,9 +358,49 @@ function toStaff(row, runStops = []) {
   }
 }
 
-function toSnapshot(raw, at, runStops = readWaitingRunStops()) {
+function toSnapshot(raw, at, runStops = readWaitingRunStops(), terminalsRaw = null) {
   const result = raw?.result
-  const worktrees = Array.isArray(result?.worktrees) ? result.worktrees : []
+  const worktrees = Array.isArray(result?.worktrees) ? result.worktrees.map((w) => ({ ...w, agents: Array.isArray(w.agents) ? [...w.agents] : [] })) : []
+  
+  if (terminalsRaw) {
+    const rawTerms = Array.isArray(terminalsRaw?.result?.terminals)
+      ? terminalsRaw.result.terminals
+      : Array.isArray(terminalsRaw) ? terminalsRaw : []
+    const openWts = worktrees.filter((w) => w.isArchived !== true)
+    const wtMap = new Map()
+    for (const w of openWts) {
+      const id = str(w.worktreeId)
+      if (id) wtMap.set(id, w)
+    }
+    for (const t of rawTerms) {
+      if (t.connected !== true || t.orphaned === true) continue
+      const identity = str(t.agentIdentity)
+      if (!identity) continue
+      const tabId = str(t.tabId)
+      const leafId = str(t.leafId)
+      if (!tabId || !leafId) continue
+      const paneKey = `${tabId}:${leafId}`
+      const wtId = str(t.worktreeId)
+      if (!wtId) continue
+      const wt = wtMap.get(wtId)
+      if (!wt) continue // Closed / archived / missing worktree -> NEVER add
+      const agents = Array.isArray(wt.agents) ? wt.agents : []
+      if (agents.some((a) => str(a.paneKey) === paneKey)) continue
+      agents.push({
+        paneKey,
+        agentType: identity,
+        conversationName: str(t.title),
+        displayName: str(t.title),
+        taskTitle: str(t.title),
+        lastAssistantMessage: str(t.preview),
+        state: 'idle',
+        stateStartedAt: typeof t.lastOutputAt === 'number' ? t.lastOutputAt : 0,
+        hasLivePty: true
+      })
+      wt.agents = agents
+    }
+  }
+
   const floors = new Map()
   for (const w of worktrees) {
     if (w.isArchived === true) continue
@@ -404,7 +444,8 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname === '/api/snapshot' && req.method === 'GET') {
     try {
       const raw = await runPs()
-      const snap = toSnapshot(raw, Date.now())
+      const terminals = await execCliJson(['terminal', 'list', '--json']).catch(() => null)
+      const snap = toSnapshot(raw, Date.now(), readWaitingRunStops(), terminals)
       res.writeHead(200, { 'Content-Type': 'application/json' })
       res.end(JSON.stringify(snap))
     } catch (e) {

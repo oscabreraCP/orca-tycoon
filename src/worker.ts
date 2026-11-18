@@ -683,6 +683,56 @@ const worktreesOf = (raw: unknown): Row[] => {
   return Array.isArray(worktrees) ? (worktrees as Row[]) : []
 }
 
+const terminalsOf = (raw: unknown): Row[] => {
+  const terminals = (raw as { result?: { terminals?: unknown } } | null)?.result?.terminals
+  return Array.isArray(terminals) ? (terminals as Row[]) : Array.isArray(raw) ? (raw as Row[]) : []
+}
+
+function enrichWithTerminals(
+  all: { w: Row; environment: string | null }[],
+  localTerminalsRaw: unknown,
+  idOf: (id: string | null, environment: string | null) => string | null
+): void {
+  const openWts = all.filter(({ w }) => w.isArchived !== true)
+  const wtMap = new Map<string, Row>()
+  for (const { w, environment } of openWts) {
+    const id = idOf(str(w.worktreeId), environment)
+    if (id) wtMap.set(id, w)
+  }
+
+  const terms = terminalsOf(localTerminalsRaw)
+  for (const t of terms) {
+    if (t.connected !== true || t.orphaned === true) continue
+    const identity = str(t.agentIdentity)
+    if (!identity) continue
+    const tabId = str(t.tabId)
+    const leafId = str(t.leafId)
+    if (!tabId || !leafId) continue
+    const paneKey = `${tabId}:${leafId}`
+
+    const wtId = idOf(str(t.worktreeId), null)
+    if (!wtId) continue
+    const wt = wtMap.get(wtId)
+    if (!wt) continue // Closed / archived / missing worktree -> NEVER add
+
+    const agents = Array.isArray(wt.agents) ? (wt.agents as Row[]) : []
+    if (agents.some((a) => str(a.paneKey) === paneKey)) continue
+
+    agents.push({
+      paneKey,
+      agentType: identity,
+      conversationName: str(t.title),
+      displayName: str(t.title),
+      taskTitle: str(t.title),
+      lastAssistantMessage: str(t.preview),
+      state: 'idle',
+      stateStartedAt: typeof t.lastOutputAt === 'number' ? t.lastOutputAt : 0,
+      hasLivePty: true
+    })
+    wt.agents = agents
+  }
+}
+
 /**
  * The office from this machine's `worktree ps` answer and each paired server's. A server's desks
  * join the team of their project like any other, their ids prefixed with the server so a desk
@@ -692,14 +742,16 @@ export function toSnapshot(
   raw: unknown,
   at: number,
   servers: ServerAnswer[] = [],
-  runStops: readonly RunStopWait[] = []
+  runStops: readonly RunStopWait[] = [],
+  terminalsRaw?: unknown
 ): OfficeSnapshot {
   type Placed = { w: Row; environment: string | null }
   const all: Placed[] = [
-    ...worktreesOf(raw).map((w) => ({ w, environment: null })),
-    ...servers.flatMap((s) => worktreesOf(s.raw).map((w) => ({ w, environment: s.environment })))
+    ...worktreesOf(raw).map((w) => ({ w: { ...w, agents: Array.isArray(w.agents) ? [...w.agents] : [] }, environment: null })),
+    ...servers.flatMap((s) => worktreesOf(s.raw).map((w) => ({ w: { ...w, agents: Array.isArray(w.agents) ? [...w.agents] : [] }, environment: s.environment })))
   ]
   const idOf = (id: string | null, environment: string | null) => (id && environment ? `${environment}|${id}` : id)
+  enrichWithTerminals(all, terminalsRaw, idOf)
   const repoOf = (w: Row) => str(w.repo) ?? 'Other'
   const busy = (w: Row) => Array.isArray(w.agents) && w.agents.length > 0
   // A project with a live agent brings all its worktrees that are not archived, the sleeping ones
@@ -838,8 +890,9 @@ export default function activate(orca: OrcaWorkerApi): void {
       const { local, servers } = await readAllHosts(runCli, (environment, error) =>
         orca.log(`worktree ps on ${environment} failed: ${error instanceof Error ? error.message : String(error)}`)
       )
+      const terminals = await runCli(['terminal', 'list', '--json']).catch(() => null)
       environments = pairedEnvironments(local)
-      last = toSnapshot(local, Date.now(), servers, readWaitingRunStops())
+      last = toSnapshot(local, Date.now(), servers, readWaitingRunStops(), terminals)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       orca.log(`worktree ps failed: ${message}`)
